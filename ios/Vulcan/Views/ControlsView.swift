@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/// Media, volume, power and the custom command buttons from the PC's config.
+/// Media, volume, screens, power and the custom command buttons from the PC's config.
 struct ControlsView: View {
     @Environment(AppModel.self) private var model
     @State private var sliderValue = 0.0
@@ -16,7 +16,8 @@ struct ControlsView: View {
             VStack(spacing: 14) {
                 nowPlaying
                 volume
-                if conn.caps.contains("power") || conn.caps.contains("display") { power }
+                if conn.caps.contains("display") { screens }
+                if conn.caps.contains("power") { power }
                 commands
             }
             .padding(12)
@@ -107,17 +108,37 @@ struct ControlsView: View {
         }
     }
 
+    private var screens: some View {
+        Card(title: "Screens", icon: "display.2") {
+            if !conn.monitors.isEmpty {
+                MonitorMap(monitors: conn.monitors) { monitor in
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    conn.send(.display(.toggle, monitor: monitor.name))
+                }
+            }
+            let anyOn = conn.monitors.isEmpty || conn.monitors.contains { $0.on }
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                conn.send(.display(.toggle))
+            } label: {
+                Label(anyOn ? "Turn all off" : "Turn all on", systemImage: anyOn ? "moon.zzz.fill" : "sun.max.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            if conn.monitors.count > 1 {
+                Text("Tap a screen to switch just that one. When every screen is off, a key press or mouse move wakes them all.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var power: some View {
         Card(title: "Power", icon: "power") {
             HStack(spacing: 10) {
-                if conn.caps.contains("display") {
-                    PowerButton(title: "Screen", icon: "display") { conn.send(.display(.toggle)) }
-                }
-                if conn.caps.contains("power") {
-                    PowerButton(title: "Lock", icon: "lock.fill") { conn.send(.power(.lock)) }
-                    PowerButton(title: "Restart", icon: "arrow.clockwise") { confirming = .reboot }
-                    PowerButton(title: "Shut down", icon: "power", destructive: true) { confirming = .poweroff }
-                }
+                PowerButton(title: "Lock", icon: "lock.fill") { conn.send(.power(.lock)) }
+                PowerButton(title: "Restart", icon: "arrow.clockwise") { confirming = .reboot }
+                PowerButton(title: "Shut down", icon: "power", destructive: true) { confirming = .poweroff }
             }
         }
     }
@@ -178,6 +199,62 @@ private struct Card<Content: View>: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+}
+
+/// The PC's monitors drawn in their real arrangement; tap one to toggle it.
+private struct MonitorMap: View {
+    let monitors: [MonitorInfo]
+    let onTap: (MonitorInfo) -> Void
+
+    private var bounds: CGRect {
+        monitors.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.w, height: $1.h)) }
+    }
+
+    var body: some View {
+        let b = bounds
+        GeometryReader { geo in
+            let scale = min(geo.size.width / b.width, geo.size.height / b.height)
+            let ox = (geo.size.width - b.width * scale) / 2
+            let oy = (geo.size.height - b.height * scale) / 2
+            ForEach(monitors) { m in
+                MonitorTile(monitor: m)
+                    .frame(width: max(m.w * scale - 8, 1), height: max(m.h * scale - 8, 1))
+                    .contentShape(Rectangle())
+                    .onTapGesture { onTap(m) }
+                    .position(
+                        x: ox + (m.x - b.minX + m.w / 2) * scale,
+                        y: oy + (m.y - b.minY + m.h / 2) * scale
+                    )
+            }
+        }
+        .aspectRatio(b.width / max(b.height, 1), contentMode: .fit)
+        .frame(maxWidth: .infinity, maxHeight: 180)
+        .animation(.easeInOut(duration: 0.2), value: monitors)
+    }
+}
+
+private struct MonitorTile: View {
+    let monitor: MonitorInfo
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 10, style: .continuous)
+        ZStack {
+            shape.fill(monitor.on ? Theme.accent : Color.white.opacity(0.05))
+            shape.strokeBorder(monitor.on ? Color.clear : Color.white.opacity(0.25), lineWidth: 1.5)
+            VStack(spacing: 2) {
+                Image(systemName: monitor.on ? "display" : "moon.zzz.fill").font(.title3)
+                Text(monitor.label).font(.caption.weight(.semibold)).lineLimit(1)
+                Text(monitor.on ? monitor.name : "\(monitor.name) · off").font(.caption2).opacity(0.7)
+            }
+            .minimumScaleFactor(0.6)
+            .padding(4)
+            .foregroundStyle(monitor.on ? Color.black : Color.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(monitor.label), \(monitor.on ? "on" : "off")")
+        .accessibilityHint("Double-tap to turn \(monitor.on ? "off" : "on")")
+        .accessibilityAddTraits(.isButton)
     }
 }
 

@@ -32,6 +32,21 @@ enum PowerAction: String, Identifiable {
     var id: String { rawValue }
 }
 
+/// One PC monitor with its position in the desktop layout (logical pixels).
+struct MonitorInfo: Decodable, Identifiable, Equatable {
+    /// Connector name, e.g. "DP-1".
+    let name: String
+    /// Friendly name from the PC's config, or the model.
+    let label: String
+    let x: Double
+    let y: Double
+    let w: Double
+    let h: Double
+    let on: Bool
+
+    var id: String { name }
+}
+
 /// A custom command button defined in the PC's config.
 struct RemoteCommand: Decodable, Identifiable, Hashable {
     let id: String
@@ -49,7 +64,8 @@ enum ClientMessage: Encodable {
     case media(MediaAction)
     case volume(VolumeAction, value: Double? = nil)
     case power(PowerAction)
-    case display(DisplayAction)
+    /// One monitor by connector name, or all of them when `monitor` is nil.
+    case display(DisplayAction, monitor: String? = nil)
     case cmd(String)
     case refresh
     case ping
@@ -65,7 +81,7 @@ enum ClientMessage: Encodable {
     static let protocolVersion = 1
 
     private enum CodingKeys: String, CodingKey {
-        case t, token, device, v, dx, dy, b, s, k, mods, a, value, id
+        case t, token, device, v, dx, dy, b, s, k, mods, a, value, id, monitor
     }
 
     func encode(to encoder: Encoder) throws {
@@ -106,9 +122,10 @@ enum ClientMessage: Encodable {
         case let .power(a):
             try c.encode("power", forKey: .t)
             try c.encode(a.rawValue, forKey: .a)
-        case let .display(a):
+        case let .display(a, monitor):
             try c.encode("display", forKey: .t)
             try c.encode(a.rawValue, forKey: .a)
+            try c.encodeIfPresent(monitor, forKey: .monitor)
         case let .cmd(id):
             try c.encode("cmd", forKey: .t)
             try c.encode(id, forKey: .id)
@@ -139,6 +156,7 @@ struct ServerMessage: Decodable {
     let title: String?
     let artist: String?
     let player: String?
+    let monitors: [MonitorInfo]?
 
     static func parse(_ text: String) -> ServerMessage? {
         try? JSONDecoder().decode(ServerMessage.self, from: Data(text.utf8))

@@ -7,7 +7,9 @@ use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
 use crate::config::{CommandConfig, PowerConfig};
-use crate::protocol::{DisplayAction, MediaAction, PowerAction, ServerMsg, VolumeAction};
+use std::collections::HashMap;
+
+use crate::protocol::{DisplayAction, MediaAction, MonitorInfo, PowerAction, ServerMsg, VolumeAction};
 
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 
@@ -131,43 +133,103 @@ async fn hypr_option(section: &str, key: &str, value: &str) -> Result<()> {
     hypr(&["keyword", &format!("{section}:{key}"), value]).await
 }
 
-async fn dpms(on: bool) -> Result<()> {
+async fn dpms(on: bool, monitor: Option<&str>) -> Result<()> {
     let state = if on { "on" } else { "off" };
     // Lua config takes a table; a bare string argument is ignored and toggles instead.
-    if hypr(&["dispatch", &format!("hl.dsp.dpms({{ action = \"{state}\" }})")]).await.is_ok() {
+    let lua = match monitor {
+        Some(m) => format!("hl.dsp.dpms({{ action = \"{state}\", monitor = \"{m}\" }})"),
+        None => format!("hl.dsp.dpms({{ action = \"{state}\" }})"),
+    };
+    if hypr(&["dispatch", &lua]).await.is_ok() {
         return Ok(());
     }
-    hypr(&["dispatch", "dpms", state]).await
+    let mut legacy = vec!["dispatch", "dpms", state];
+    legacy.extend(monitor);
+    hypr(&legacy).await
 }
 
-/// DPMS state of each monitor, from `hyprctl monitors -j`.
-async fn screens_on() -> Result<Vec<bool>> {
-    let out = run("hyprctl", &["monitors", "-j"]).await?;
-    let monitors: Vec<serde_json::Value> = serde_json::from_str(&out).context("parsing hyprctl monitors")?;
-    Ok(monitors.iter().map(|m| m["dpmsStatus"].as_bool().unwrap_or(true)).collect())
+/// Current monitors with their layout and DPMS state.
+pub async fn monitors(aliases: &HashMap<String, String>) -> Result<Vec<MonitorInfo>> {
+    parse_monitors(&run("hyprctl", &["monitors", "-j"]).await?, aliases)
 }
 
-/// Monitors off/on via Hyprland DPMS, without suspending.
-pub async fn display(a: DisplayAction) -> Result<String> {
+fn parse_monitors(json: &str, aliases: &HashMap<String, String>) -> Result<Vec<MonitorInfo>> {
+    let list: Vec<serde_json::Value> = serde_json::from_str(json).context("parsing hyprctl monitors")?;
+    let mut out: Vec<MonitorInfo> = list
+        .iter()
+        .filter(|m| !m["disabled"].as_bool().unwrap_or(false))
+        .map(|m| {
+            let name = m["name"].as_str().unwrap_or("?").to_string();
+            let scale = m["scale"].as_f64().filter(|s| *s > 0.0).unwrap_or(1.0);
+            let (mut w, mut h) = (m["width"].as_f64().unwrap_or(0.0) / scale, m["height"].as_f64().unwrap_or(0.0) / scale);
+            // Rotated 90° or 270° (transform 1, 3, 5, 7) swaps the logical size.
+            if m["transform"].as_i64().unwrap_or(0) % 2 == 1 {
+                std::mem::swap(&mut w, &mut h);
+            }
+            let label = aliases
+                .get(&name)
+                .cloned()
+                .or_else(|| m["model"].as_str().filter(|s| !s.is_empty()).map(str::to_string))
+                .unwrap_or_else(|| name.clone());
+            MonitorInfo {
+                label,
+                x: m["x"].as_f64().unwrap_or(0.0),
+                y: m["y"].as_f64().unwrap_or(0.0),
+                w,
+                h,
+                on: m["dpmsStatus"].as_bool().unwrap_or(true),
+                name,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    Ok(out)
+}
+
+/// Switch one monitor (by connector) or all of them off/on via Hyprland DPMS, without suspending.
+/// Returns a message for the phone and the monitors' new state.
+pub async fn display(
+    a: DisplayAction,
+    monitor: Option<&str>,
+    aliases: &HashMap<String, String>,
+) -> Result<(String, Vec<MonitorInfo>)> {
+    let before = monitors(aliases).await?;
+    let targeted = |m: &MonitorInfo| monitor.is_none_or(|n| n == m.name);
+    let targets: Vec<&MonitorInfo> = before.iter().filter(|m| targeted(m)).collect();
+    if targets.is_empty() {
+        bail!("no monitor named {:?}", monitor.unwrap_or(""));
+    }
     let turn_on = match a {
         DisplayAction::On => true,
         DisplayAction::Off => false,
-        DisplayAction::Toggle => !screens_on().await?.iter().any(|&on| on),
+        DisplayAction::Toggle => !targets.iter().any(|m| m.on),
     };
-    if !turn_on {
-        // Hyprland's defaults don't wake on input; let any key press or mouse movement
-        // (physical or from the phone) bring the screens back.
-        hypr_option("misc", "key_press_enables_dpms", "true").await?;
-        hypr_option("misc", "mouse_move_enables_dpms", "true").await?;
-    }
-    dpms(turn_on).await?;
+
+    // Waking on input turns every monitor back on, which would undo switching off just one.
+    // So only allow it when all of them end up off.
+    let all_off = before.iter().all(|m| if targeted(m) { !turn_on } else { !m.on });
+    let wake = if all_off { "true" } else { "false" };
+    hypr_option("misc", "key_press_enables_dpms", wake).await?;
+    hypr_option("misc", "mouse_move_enables_dpms", wake).await?;
+
+    dpms(turn_on, monitor).await?;
     // hyprctl can report "ok" for a dispatcher that did nothing; check the result.
     tokio::time::sleep(Duration::from_millis(150)).await;
-    let now = screens_on().await?;
-    if now.iter().any(|&on| on != turn_on) {
-        bail!("screens didn't switch {} (DPMS state: {now:?})", if turn_on { "on" } else { "off" });
+    let after = monitors(aliases).await?;
+    if let Some(m) = after.iter().find(|m| targeted(m) && m.on != turn_on) {
+        bail!("{} didn't switch {}", m.label, if turn_on { "on" } else { "off" });
     }
-    Ok(if turn_on { "Screens on".into() } else { "Screens off. Tap Screen, move the mouse or press a key to wake them".into() })
+
+    let what = match monitor.and_then(|n| after.iter().find(|m| m.name == n)) {
+        Some(m) => format!("{} ({})", m.label, m.name),
+        None => "Screens".into(),
+    };
+    let msg = match (turn_on, all_off) {
+        (true, _) => format!("{what} on"),
+        (false, true) => "All screens off. Move the mouse or press a key to wake them".into(),
+        (false, false) => format!("{what} off"),
+    };
+    Ok((msg, after))
 }
 
 /// Only commands defined in the config can run; the phone just names one.
@@ -200,6 +262,21 @@ mod tests {
                 player: "spotify".into()
             }
         );
+    }
+
+    #[test]
+    fn monitor_layout() {
+        let json = r#"[
+            {"name":"DP-1","model":"LG ULTRAFINE","x":3840,"y":0,"width":3840,"height":2160,"scale":2,"transform":0,"dpmsStatus":true,"disabled":false},
+            {"name":"DP-2","model":"LG ULTRAFINE","x":0,"y":0,"width":3840,"height":2160,"scale":1,"transform":1,"dpmsStatus":false,"disabled":false},
+            {"name":"HDMI-A-1","model":"","x":0,"y":0,"width":1920,"height":1080,"scale":1,"transform":0,"dpmsStatus":true,"disabled":true}
+        ]"#;
+        let aliases = HashMap::from([("DP-2".to_string(), "Left".to_string())]);
+        let m = parse_monitors(json, &aliases).unwrap();
+        assert_eq!(m.len(), 2, "disabled monitors are skipped");
+        assert_eq!((m[0].name.as_str(), m[0].label.as_str(), m[0].on), ("DP-2", "Left", false));
+        assert_eq!((m[0].w, m[0].h), (2160.0, 3840.0), "rotated monitor swaps size");
+        assert_eq!((m[1].label.as_str(), m[1].w, m[1].h), ("LG ULTRAFINE", 1920.0, 1080.0), "scaled");
     }
 
     #[tokio::test]

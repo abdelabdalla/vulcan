@@ -181,7 +181,7 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
     match msg {
         ClientMsg::Hello { .. } => return vec![],
         ClientMsg::Ping => return vec![ServerMsg::Pong],
-        ClientMsg::Refresh => return refresh().await,
+        ClientMsg::Refresh => return refresh(st).await,
         _ => {}
     }
     // Pause is a kill switch for everything the phone can do.
@@ -205,7 +205,9 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
             info!(action = ?a, "power action from phone");
             actions::power(a, &st.cfg.power).await.map(|msg| vec![ServerMsg::Info { msg }])
         }
-        ClientMsg::Display { a } => actions::display(a).await.map(|msg| vec![ServerMsg::Info { msg }]),
+        ClientMsg::Display { a, monitor } => actions::display(a, monitor.as_deref(), &st.cfg.displays)
+            .await
+            .map(|(msg, monitors)| vec![ServerMsg::Info { msg }, ServerMsg::Displays { monitors }]),
         ClientMsg::Cmd { id } => {
             info!(command = %id, "custom command from phone");
             actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])
@@ -215,9 +217,11 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
     result.unwrap_or_else(|e| vec![ServerMsg::Error { msg: format!("{e:#}") }])
 }
 
-async fn refresh() -> Vec<ServerMsg> {
-    let (volume, media) = tokio::join!(actions::get_volume(), actions::now_playing());
-    volume.into_iter().chain([media]).collect()
+async fn refresh(st: &AppState) -> Vec<ServerMsg> {
+    let (volume, media, monitors) =
+        tokio::join!(actions::get_volume(), actions::now_playing(), actions::monitors(&st.cfg.displays));
+    let monitors = monitors.ok().map(|monitors| ServerMsg::Displays { monitors });
+    volume.into_iter().chain([media]).chain(monitors).collect()
 }
 
 fn handle_input(st: &AppState, msg: ClientMsg) -> anyhow::Result<Option<ServerMsg>> {

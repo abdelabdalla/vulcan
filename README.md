@@ -62,6 +62,7 @@ The config lives at `~/.config/vulcan/config.toml` and is created on first run:
 | `pointer.scroll_speed` | 4.0 | Scroll speed |
 | `power.enabled` | `true` | Allow lock, sleep, restart and shut down from the phone |
 | `power.lock` | `loginctl lock-session` | The command that locks the screen. The default needs hypridle running, because hypridle's `lock_cmd` is what starts hyprlock. |
+| `[displays]` | none | Friendly monitor names for the phone, keyed by connector name, e.g. `DP-2 = "Left"` |
 | `[[commands]]` | none | Buttons on the phone's Controls tab. Each has a `name`, a `run` command and an optional `icon` (an SF Symbol name). |
 
 Custom commands run through `sh -c`, and only the commands listed in the config can run. Start apps through Hyprland, so that Hyprland owns them rather than vulcand. With the Lua config:
@@ -79,7 +80,7 @@ The phone and PC exchange JSON text frames over `wss://<pc>:47800/ws`. The first
 
 | Direction | Messages |
 |---|---|
-| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a}`, `cmd{id}`, `refresh`, `ping` |
-| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `paused{paused}`, `pong` |
+| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `cmd{id}`, `refresh`, `ping` |
+| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `paused{paused}`, `pong` |
 
 See [`daemon/src/protocol.rs`](daemon/src/protocol.rs) for the full definitions.

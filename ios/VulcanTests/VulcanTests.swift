@@ -58,6 +58,8 @@ final class VulcanTests: XCTestCase {
         XCTAssertEqual(try object(.power(.poweroff))["a"] as? String, "poweroff")
         XCTAssertEqual(try object(.display(.toggle))["t"] as? String, "display")
         XCTAssertEqual(try object(.display(.toggle))["a"] as? String, "toggle")
+        XCTAssertNil(try object(.display(.toggle))["monitor"], "all monitors when no name")
+        XCTAssertEqual(try object(.display(.off, monitor: "DP-2"))["monitor"] as? String, "DP-2")
         XCTAssertEqual(try object(.cmd("Workspace 2"))["id"] as? String, "Workspace 2")
         XCTAssertTrue(ClientMessage.refresh.allowedWhilePaused)
         XCTAssertFalse(ClientMessage.media(.next).allowedWhilePaused)
@@ -72,6 +74,11 @@ final class VulcanTests: XCTestCase {
         let vol = try XCTUnwrap(ServerMessage.parse(#"{"t":"volume","level":0.5,"muted":true}"#))
         XCTAssertEqual(vol.level, 0.5)
         XCTAssertEqual(vol.muted, true)
+        let displays = try XCTUnwrap(ServerMessage.parse(
+            #"{"t":"displays","monitors":[{"name":"DP-2","label":"Left","x":0.0,"y":0.0,"w":3840.0,"h":2160.0,"on":false}]}"#
+        ))
+        XCTAssertEqual(displays.monitors?.first?.label, "Left")
+        XCTAssertEqual(displays.monitors?.first?.on, false)
         let media = try XCTUnwrap(ServerMessage.parse(#"{"t":"media","status":"Playing","title":"S","artist":"A","player":"spotify"}"#))
         XCTAssertEqual(media.status, "Playing")
     }

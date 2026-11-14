@@ -30,6 +30,7 @@ final class ConnectionManager {
     private(set) var commands: [RemoteCommand] = []
     private(set) var volume: VolumeState?
     private(set) var media: MediaState?
+    private(set) var monitors: [MonitorInfo] = []
     var onHostChanged: ((String) -> Void)?
 
     private var pairing: Pairing?
@@ -176,6 +177,8 @@ final class ConnectionManager {
                 artist: msg.artist ?? "",
                 player: msg.player ?? ""
             )
+        case "displays":
+            monitors = msg.monitors ?? []
         case "info":
             if let text = msg.msg { show(toast: text, isError: false) }
         case "paused":

@@ -52,8 +52,22 @@ pub enum VolumeAction {
 pub enum DisplayAction {
     Off,
     On,
-    /// Off if any monitor is on, otherwise on.
+    /// Off if any targeted monitor is on, otherwise on.
     Toggle,
+}
+
+/// One monitor as the phone draws it: logical position and size in the desktop layout.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MonitorInfo {
+    /// Connector name, e.g. "DP-1"; used to address the monitor.
+    pub name: String,
+    /// Friendly name: the `[displays]` alias from config, else the model.
+    pub label: String,
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+    pub on: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,8 +115,12 @@ pub enum ClientMsg {
         value: Option<f64>,
     },
     Power { a: PowerAction },
-    /// Turn the monitors off or on without suspending.
-    Display { a: DisplayAction },
+    /// Turn monitors off or on without suspending: one by connector name, or all.
+    Display {
+        a: DisplayAction,
+        #[serde(default)]
+        monitor: Option<String>,
+    },
     /// Run a custom command from the config by id.
     Cmd { id: String },
     /// Ask for current volume and now-playing info.
@@ -128,6 +146,7 @@ pub enum ServerMsg {
     Volume { level: f64, muted: bool },
     /// `status` is Playing / Paused / Stopped, or "none" when no player is running.
     Media { status: String, title: String, artist: String, player: String },
+    Displays { monitors: Vec<MonitorInfo> },
     Paused { paused: bool },
     Pong,
 }
@@ -153,7 +172,9 @@ mod tests {
         let m: ClientMsg = serde_json::from_str(r#"{"t":"power","a":"poweroff"}"#).unwrap();
         assert_eq!(m, ClientMsg::Power { a: PowerAction::Poweroff });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"toggle"}"#).unwrap();
-        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Toggle });
+        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Toggle, monitor: None });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"off","monitor":"DP-2"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Off, monitor: Some("DP-2".into()) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
     }

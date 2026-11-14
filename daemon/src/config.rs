@@ -40,6 +40,8 @@ pub struct Config {
     pub pointer: PointerConfig,
     pub power: PowerConfig,
     pub commands: Vec<CommandConfig>,
+    /// Friendly monitor names for the phone, keyed by connector: `DP-2 = "Left"`.
+    pub displays: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +103,7 @@ impl Default for Config {
             pointer: PointerConfig::default(),
             power: PowerConfig::default(),
             commands: Vec::new(),
+            displays: Default::default(),
         }
     }
 }
@@ -137,6 +140,11 @@ scroll_speed = 4.0   # wheel units per point (120 = one notch)
 [power]
 enabled = true                           # lock / suspend / reboot / power off from the phone
 lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts hyprlock)
+
+# Friendly monitor names on the phone, keyed by connector (see `hyprctl monitors`).
+[displays]
+# DP-2 = "Left"
+# DP-1 = "Right"
 
 # Buttons on the phone's Controls tab. `icon` is an SF Symbol name.
 # Launch apps through Hyprland so they don't belong to vulcand.
