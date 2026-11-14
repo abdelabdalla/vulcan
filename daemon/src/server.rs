@@ -9,20 +9,23 @@ use axum::extract::{ConnectInfo, State};
 use axum::response::Response;
 use axum::routing::get;
 use axum_server::tls_rustls::RustlsConfig;
-use tokio::sync::watch;
+use tokio::sync::{broadcast, watch};
 use tracing::{info, warn};
 
 use crate::auth::DeviceStore;
 use crate::config::{Config, Paths};
 use crate::input::Input;
-use crate::{actions, usb};
+use crate::clipboard::{self, Clip, ClipMemory};
+use crate::config::RuntimeState;
 use crate::protocol::{ClientMsg, CommandInfo, PROTOCOL_VERSION, ServerMsg};
+use crate::{actions, usb};
 use crate::tls::Tls;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Status {
     pub connected: Vec<String>,
     pub paused: bool,
+    pub runtime: RuntimeState,
 }
 
 pub struct AppState {
@@ -32,6 +35,9 @@ pub struct AppState {
     pub host: String,
     pub input: Mutex<Input>,
     pub status: watch::Sender<Status>,
+    /// New PC clipboard content, from the watcher.
+    pub clip_tx: broadcast::Sender<Arc<Clip>>,
+    pub clip_memory: Mutex<ClipMemory>,
 }
 
 impl AppState {
@@ -45,6 +51,27 @@ impl AppState {
 
     pub fn paused(&self) -> bool {
         self.status.borrow().paused
+    }
+
+    pub fn runtime(&self) -> RuntimeState {
+        self.status.borrow().runtime
+    }
+
+    /// Change clipboard auto-sync settings (from tray or phone) and persist them.
+    pub fn set_clip_sync(&self, to_phone: Option<bool>, to_pc: Option<bool>) {
+        self.status.send_modify(|s| {
+            if let Some(v) = to_phone {
+                s.runtime.clip_to_phone = v;
+            }
+            if let Some(v) = to_pc {
+                s.runtime.clip_to_pc = v;
+            }
+        });
+        let rt = self.runtime();
+        if let Err(e) = rt.save(&self.paths) {
+            warn!("saving state: {e:#}");
+        }
+        info!(to_phone = rt.clip_to_phone, to_pc = rt.clip_to_pc, "clipboard sync settings");
     }
 }
 
@@ -67,7 +94,7 @@ async fn ws_handler(
     State(st): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
-    ws.max_message_size(1 << 20).on_upgrade(move |socket| async move {
+    ws.max_message_size(32 << 20).max_frame_size(32 << 20).on_upgrade(move |socket| async move {
         if let Err(e) = session(socket, st, addr).await {
             warn!(%addr, "session ended with error: {e:#}");
         }
@@ -100,7 +127,8 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     };
 
     info!(%addr, device = %name, "connected");
-    let mut caps = vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into()];
+    let mut caps =
+        vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into(), "clipboard".into()];
     if st.cfg.power.enabled {
         caps.push("power".into());
     }
@@ -124,6 +152,16 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     if st.paused() {
         send(&mut socket, &ServerMsg::Paused { paused: true }).await?;
     }
+    let rt = st.runtime();
+    send(&mut socket, &ServerMsg::ClipSettings { to_phone: rt.clip_to_phone, to_pc: rt.clip_to_pc }).await?;
+    // The phone reconnects whenever it comes to the front; offer the current PC clipboard.
+    // It skips content it already has (by hash), so only new PC copies replace its clipboard.
+    if rt.clip_to_phone
+        && !st.paused()
+        && let Ok(Some(clip)) = clipboard::read().await
+    {
+        send(&mut socket, &clip.to_msg()).await?;
+    }
     st.status.send_modify(|s| s.connected.push(name.clone()));
 
     let result = run_session(&mut socket, &st, &token).await;
@@ -142,6 +180,8 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
     let mut recheck = tokio::time::interval(Duration::from_secs(5));
     let mut status_rx = st.status.subscribe();
     let mut last_paused = status_rx.borrow_and_update().paused;
+    let mut last_runtime = st.runtime();
+    let mut clip_rx = st.clip_tx.subscribe();
     loop {
         tokio::select! {
             msg = socket.recv() => {
@@ -157,6 +197,17 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
                     _ => {}
                 }
             }
+            clip = clip_rx.recv() => {
+                match clip {
+                    Ok(clip) => {
+                        if st.runtime().clip_to_phone && !st.paused() {
+                            send(socket, &clip.to_msg()).await?;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                }
+            }
             // Drop the session promptly if the device is revoked (tray or CLI).
             _ = recheck.tick() => {
                 if DeviceStore::load(&st.paths.devices())?.verify(token).is_none() {
@@ -166,10 +217,17 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
             }
             changed = status_rx.changed() => {
                 if changed.is_err() { return Ok(()) }
-                let paused = status_rx.borrow_and_update().paused;
+                let (paused, runtime) = {
+                    let s = status_rx.borrow_and_update();
+                    (s.paused, s.runtime)
+                };
                 if paused != last_paused {
                     last_paused = paused;
                     send(socket, &ServerMsg::Paused { paused }).await?;
+                }
+                if runtime != last_runtime {
+                    last_runtime = runtime;
+                    send(socket, &ServerMsg::ClipSettings { to_phone: runtime.clip_to_phone, to_pc: runtime.clip_to_pc }).await?;
                 }
             }
         }
@@ -185,6 +243,10 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
         ClientMsg::Hello { .. } => return vec![],
         ClientMsg::Ping => return vec![ServerMsg::Pong],
         ClientMsg::Refresh => return refresh(st).await,
+        ClientMsg::ClipSettings { to_phone, to_pc } => {
+            st.set_clip_sync(to_phone, to_pc);
+            return vec![];
+        }
         _ => {}
     }
     // Pause is a kill switch for everything the phone can do.
@@ -217,6 +279,27 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
                 vec![ServerMsg::Info { msg }, ServerMsg::UsbDevices { devices: usb::states(&st.cfg.usb) }]
             })
         }
+        ClientMsg::ClipSet { kind, text, mime, data, auto } => {
+            if auto && !st.runtime().clip_to_pc {
+                return vec![];
+            }
+            match Clip::from_parts(kind, text, mime, data) {
+                Ok(clip) => {
+                    // Remember it so the watcher doesn't send it straight back to the phone.
+                    st.clip_memory.lock().unwrap().from_phone = Some(clip.hash());
+                    clipboard::write(&clip).await.map(|()| {
+                        info!(auto, kind = ?kind, "clipboard from phone");
+                        if auto { vec![] } else { vec![ServerMsg::Info { msg: "Copied to the PC clipboard".into() }] }
+                    })
+                }
+                Err(e) => Err(e),
+            }
+        }
+        ClientMsg::ClipGet => match clipboard::read().await {
+            Ok(Some(clip)) => Ok(vec![clip.to_msg()]),
+            Ok(None) => Ok(vec![ServerMsg::Info { msg: "The PC clipboard is empty".into() }]),
+            Err(e) => Err(e),
+        },
         ClientMsg::Cmd { id } => {
             info!(command = %id, "custom command from phone");
             actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])

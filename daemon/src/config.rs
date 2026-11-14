@@ -29,6 +29,10 @@ impl Paths {
     pub fn key(&self) -> PathBuf {
         self.dir.join("key.pem")
     }
+    /// Settings changed at runtime from the tray or phone.
+    pub fn state(&self) -> PathBuf {
+        self.dir.join("state.toml")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,6 +185,31 @@ lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts h
 # icon = "chevron.left.forwardslash.chevron.right"
 # run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 "#;
+
+/// Runtime settings that persist across restarts (toggled from the tray or phone).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RuntimeState {
+    pub clip_to_phone: bool,
+    pub clip_to_pc: bool,
+}
+
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self { clip_to_phone: true, clip_to_pc: true }
+    }
+}
+
+impl RuntimeState {
+    pub fn load(paths: &Paths) -> Self {
+        std::fs::read_to_string(paths.state()).ok().and_then(|s| toml::from_str(&s).ok()).unwrap_or_default()
+    }
+
+    pub fn save(&self, paths: &Paths) -> Result<()> {
+        std::fs::write(paths.state(), toml::to_string(self)?)?;
+        Ok(())
+    }
+}
 
 impl Config {
     /// Load the config, writing a commented default file on first run.

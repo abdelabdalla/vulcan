@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// Media, volume, screens, power and the custom command buttons from the PC's config.
 struct ControlsView: View {
@@ -14,6 +15,7 @@ struct ControlsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                if conn.caps.contains("clipboard") { clipboard }
                 nowPlaying
                 volume
                 if conn.caps.contains("display") { screens }
@@ -46,6 +48,38 @@ struct ControlsView: View {
     }
 
     // MARK: Sections
+
+    private var clipboard: some View {
+        Card(title: "Clipboard", icon: "doc.on.clipboard") {
+            HStack(spacing: 10) {
+                // The system Paste button reads the clipboard without iOS's permission prompt.
+                PasteButton(supportedContentTypes: [.image, .plainText]) { providers in
+                    model.clipboard.sendManually(providers)
+                }
+                .buttonBorderShape(.capsule)
+                .labelStyle(.titleAndIcon)
+                Spacer(minLength: 0)
+                Button {
+                    model.clipboard.getFromPC()
+                } label: {
+                    Label("Get from PC", systemImage: "arrow.down.doc")
+                }
+                .buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+            }
+            Toggle("PC → phone automatically", isOn: Binding(
+                get: { conn.clipToPhone },
+                set: { conn.setClipSync(toPhone: $0) }
+            ))
+            Toggle("Phone → PC automatically", isOn: Binding(
+                get: { conn.clipToPC },
+                set: { conn.setClipSync(toPC: $0) }
+            ))
+            Text("Paste sends this phone's clipboard (including your Mac's, via Universal Clipboard) to the PC. Automatic phone → PC asks \"Allow Paste\" each time unless you set Settings → Vulcan → Paste from Other Apps → Allow.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
 
     private var nowPlaying: some View {
         Card(title: "Now playing", icon: "music.note") {

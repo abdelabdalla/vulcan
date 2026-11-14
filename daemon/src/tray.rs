@@ -124,6 +124,27 @@ impl ksni::Tray for VulcanTray {
                 ..Default::default()
             }
             .into(),
+            CheckmarkItem {
+                label: "Clipboard: PC → phone automatically".into(),
+                checked: self.status.runtime.clip_to_phone,
+                activate: Box::new(|t: &mut Self| {
+                    let v = !t.st.runtime().clip_to_phone;
+                    t.st.set_clip_sync(Some(v), None);
+                }),
+                ..Default::default()
+            }
+            .into(),
+            CheckmarkItem {
+                label: "Clipboard: phone → PC automatically".into(),
+                checked: self.status.runtime.clip_to_pc,
+                activate: Box::new(|t: &mut Self| {
+                    let v = !t.st.runtime().clip_to_pc;
+                    t.st.set_clip_sync(None, Some(v));
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
             StandardItem {
                 label: "Pair new device…".into(),
                 icon_name: "list-add".into(),

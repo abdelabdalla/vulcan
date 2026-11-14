@@ -57,6 +57,12 @@ struct UsbDevice: Decodable, Identifiable, Equatable {
     var id: String { name }
 }
 
+/// Clipboard content sent to the PC.
+enum ClipPayload {
+    case text(String)
+    case image(Data, mime: String)
+}
+
 /// A custom command button defined in the PC's config.
 struct RemoteCommand: Decodable, Identifiable, Hashable {
     let id: String
@@ -79,13 +85,17 @@ enum ClientMessage: Encodable {
     /// Toggle (or set, with `on`) a configured USB device by name.
     case usb(String, on: Bool? = nil)
     case cmd(String)
+    /// Put the phone's clipboard on the PC; `auto` marks automatic sync.
+    case clipSet(ClipPayload, auto: Bool)
+    case clipGet
+    case clipSettings(toPhone: Bool?, toPC: Bool?)
     case refresh
     case ping
 
     /// Pausing on the PC drops everything except these.
     var allowedWhilePaused: Bool {
         switch self {
-        case .refresh, .ping: return true
+        case .refresh, .ping, .clipSettings: return true
         default: return false
         }
     }
@@ -94,6 +104,9 @@ enum ClientMessage: Encodable {
 
     private enum CodingKeys: String, CodingKey {
         case t, token, device, v, dx, dy, b, s, k, mods, a, value, id, monitor, name, on
+        case kind, text, mime, data, auto
+        case toPhone = "to_phone"
+        case toPC = "to_pc"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -145,6 +158,24 @@ enum ClientMessage: Encodable {
         case let .cmd(id):
             try c.encode("cmd", forKey: .t)
             try c.encode(id, forKey: .id)
+        case let .clipSet(payload, auto):
+            try c.encode("clip_set", forKey: .t)
+            try c.encode(auto, forKey: .auto)
+            switch payload {
+            case let .text(text):
+                try c.encode("text", forKey: .kind)
+                try c.encode(text, forKey: .text)
+            case let .image(data, mime):
+                try c.encode("image", forKey: .kind)
+                try c.encode(mime, forKey: .mime)
+                try c.encode(data.base64EncodedString(), forKey: .data)
+            }
+        case .clipGet:
+            try c.encode("clip_get", forKey: .t)
+        case let .clipSettings(toPhone, toPC):
+            try c.encode("clip_settings", forKey: .t)
+            try c.encodeIfPresent(toPhone, forKey: .toPhone)
+            try c.encodeIfPresent(toPC, forKey: .toPC)
         case .refresh:
             try c.encode("refresh", forKey: .t)
         case .ping:
@@ -174,8 +205,18 @@ struct ServerMessage: Decodable {
     let player: String?
     let monitors: [MonitorInfo]?
     let devices: [UsbDevice]?
+    // Clipboard
+    let kind: String?
+    let text: String?
+    let mime: String?
+    let data: String?
+    let hash: String?
+    let toPhone: Bool?
+    let toPc: Bool?
 
     static func parse(_ text: String) -> ServerMessage? {
-        try? JSONDecoder().decode(ServerMessage.self, from: Data(text.utf8))
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try? decoder.decode(ServerMessage.self, from: Data(text.utf8))
     }
 }

@@ -32,7 +32,12 @@ final class ConnectionManager {
     private(set) var media: MediaState?
     private(set) var monitors: [MonitorInfo] = []
     private(set) var usbDevices: [UsbDevice] = []
+    /// Clipboard auto-sync settings, owned by the PC (shared with its tray menu).
+    private(set) var clipToPhone = true
+    private(set) var clipToPC = true
     var onHostChanged: ((String) -> Void)?
+    var onClip: ((ServerMessage) -> Void)?
+    var onClipSettings: (() -> Void)?
 
     private var pairing: Pairing?
     private var loop: Task<Void, Never>?
@@ -178,6 +183,12 @@ final class ConnectionManager {
                 artist: msg.artist ?? "",
                 player: msg.player ?? ""
             )
+        case "clip":
+            onClip?(msg)
+        case "clip_settings":
+            clipToPhone = msg.toPhone ?? clipToPhone
+            clipToPC = msg.toPc ?? clipToPC
+            onClipSettings?()
         case "usb_devices":
             usbDevices = msg.devices ?? []
         case "displays":
@@ -286,6 +297,17 @@ final class ConnectionManager {
 
     private func sendRaw(_ message: ClientMessage) {
         socket?.send(.string(message.json)) { _ in }
+    }
+
+    /// Change clipboard auto-sync; updated locally at once, confirmed by the PC.
+    func setClipSync(toPhone: Bool? = nil, toPC: Bool? = nil) {
+        if let toPhone { clipToPhone = toPhone }
+        if let toPC { clipToPC = toPC }
+        send(.clipSettings(toPhone: toPhone, toPC: toPC))
+    }
+
+    func showInfo(_ text: String) {
+        show(toast: text, isError: false)
     }
 
     private func show(toast text: String, isError: Bool) {
