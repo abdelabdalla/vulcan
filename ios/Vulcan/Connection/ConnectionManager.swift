@@ -53,6 +53,7 @@ final class ConnectionManager {
     /// How the current connection reaches the PC. Files and the PC browser need Wi-Fi.
     private(set) var transport: Transport = .wifi
     private var bluetooth: BluetoothLink?
+    private let network = NetworkMonitor()
     private var socket: URLSessionWebSocketTask?
     private var session: URLSession?
     private var ticker: FrameTicker?
@@ -117,15 +118,18 @@ final class ConnectionManager {
         if !manual.isEmpty { hosts.append(manual) }
         if !hosts.contains(p.host) { hosts.append(p.host) }
 
-        for host in hosts {
-            let outcome = await attempt(p, host: host)
-            if outcome != .unreachable || Task.isCancelled { return outcome }
-        }
-        // The PC may have a new IP: look it up by fingerprint over Bonjour.
-        state = .searching
-        if let found = await Discovery.find(fingerprint: p.fingerprint), !hosts.contains(found), !Task.isCancelled {
-            let outcome = await attempt(p, host: found)
-            if outcome != .unreachable { return outcome }
+        // Only try Wi-Fi when the phone is on Wi-Fi; on mobile data alone, go straight to Bluetooth.
+        if network.onLocalNetwork {
+            for host in hosts {
+                let outcome = await attempt(p, host: host)
+                if outcome != .unreachable || Task.isCancelled { return outcome }
+            }
+            // The PC may have a new IP: look it up by fingerprint over Bonjour.
+            state = .searching
+            if let found = await Discovery.find(fingerprint: p.fingerprint), !hosts.contains(found), !Task.isCancelled {
+                let outcome = await attempt(p, host: found)
+                if outcome != .unreachable { return outcome }
+            }
         }
         // No Wi-Fi route to the PC: fall back to Bluetooth.
         if Settings.d.bool(forKey: Settings.bluetoothFallback), !Task.isCancelled {
@@ -169,12 +173,13 @@ final class ConnectionManager {
         onConnected?()
         startTicker()
 
-        // Go back to Wi-Fi as soon as the PC is reachable again.
+        // Go back to Wi-Fi as soon as the PC is reachable again (checked while on Wi-Fi).
         let probe = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(20))
+                try? await Task.sleep(for: .seconds(5))
+                guard let self, self.network.onLocalNetwork else { continue }
                 for host in wifiHosts where await Self.reachable(host: host, port: p.port) {
-                    self?.bluetooth?.close()
+                    self.bluetooth?.close()
                     return
                 }
             }
@@ -192,7 +197,9 @@ final class ConnectionManager {
     /// Quick TCP check that the PC's port answers over Wi-Fi.
     private nonisolated static func reachable(host: String, port: Int) async -> Bool {
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return false }
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+        let params = NWParameters.tcp
+        params.prohibitedInterfaceTypes = [.cellular]
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: params)
         return await withCheckedContinuation { continuation in
             let once = OnceFlag()
             connection.stateUpdateHandler = { state in
@@ -219,6 +226,8 @@ final class ConnectionManager {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 5
         config.waitsForConnectivity = false
+        // The PC is on the local network; never try to reach it over mobile data.
+        config.allowsCellularAccess = false
         let session = URLSession(
             configuration: config,
             delegate: PinningDelegate(fingerprint: p.fingerprint),
