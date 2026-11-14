@@ -15,7 +15,8 @@ use tracing::{info, warn};
 use crate::auth::DeviceStore;
 use crate::config::{Config, Paths};
 use crate::input::Input;
-use crate::protocol::{ClientMsg, PROTOCOL_VERSION, ServerMsg};
+use crate::actions;
+use crate::protocol::{ClientMsg, CommandInfo, PROTOCOL_VERSION, ServerMsg};
 use crate::tls::Tls;
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -99,11 +100,22 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     };
 
     info!(%addr, device = %name, "connected");
+    let mut caps = vec!["input".to_string(), "media".into(), "volume".into(), "commands".into()];
+    if st.cfg.power.enabled {
+        caps.push("power".into());
+    }
+    let commands = st
+        .cfg
+        .commands
+        .iter()
+        .map(|c| CommandInfo { id: c.name.clone(), name: c.name.clone(), icon: c.icon.clone() })
+        .collect();
     send(&mut socket, &ServerMsg::Welcome {
         v: PROTOCOL_VERSION,
         host: st.host.clone(),
         device: name.clone(),
-        caps: vec!["input".into()],
+        caps,
+        commands,
     })
     .await?;
     if st.paused() {
@@ -134,7 +146,7 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
                 let Some(Ok(msg)) = msg else { return Ok(()) };
                 match msg {
                     Message::Text(t) => {
-                        if let Some(reply) = handle(st, &t) {
+                        for reply in handle(st, &t).await {
                             send(socket, &reply).await?;
                         }
                     }
@@ -161,31 +173,67 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
     }
 }
 
-fn handle(st: &AppState, text: &str) -> Option<ServerMsg> {
+async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
     let msg = match serde_json::from_str::<ClientMsg>(text) {
         Ok(m) => m,
-        Err(e) => return Some(ServerMsg::Error { msg: format!("bad message: {e}") }),
+        Err(e) => return vec![ServerMsg::Error { msg: format!("bad message: {e}") }],
     };
-    if matches!(msg, ClientMsg::Ping) {
-        return Some(ServerMsg::Pong);
+    match msg {
+        ClientMsg::Hello { .. } => return vec![],
+        ClientMsg::Ping => return vec![ServerMsg::Pong],
+        ClientMsg::Refresh => return refresh().await,
+        _ => {}
     }
-    if matches!(msg, ClientMsg::Hello { .. }) || st.paused() {
-        return None;
+    // Pause is a kill switch for everything the phone can do.
+    if st.paused() {
+        return vec![];
     }
-    let mut input = st.input.lock().unwrap();
-    let result = match msg {
-        ClientMsg::Move { dx, dy } => input.move_by(dx, dy),
-        ClientMsg::Scroll { dx, dy } => input.scroll(dx, dy),
-        ClientMsg::Button { b, s } => input.button(b, s),
-        ClientMsg::Key { k, mods, s } => input.key(&k, &mods, s),
-        ClientMsg::Text { s } => match input.type_text(&s) {
-            Ok(skipped) if !skipped.is_empty() => {
-                let s: String = skipped.into_iter().collect();
-                return Some(ServerMsg::Error { msg: format!("can't type {s:?} with this keyboard layout") });
+    let result: anyhow::Result<Vec<ServerMsg>> = match msg {
+        ClientMsg::Media { a } => match actions::media(a).await {
+            Ok(()) => {
+                // Give the player a moment to report its new state.
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(vec![actions::now_playing().await])
             }
-            other => other.map(|_| ()),
+            Err(e) => Err(e),
         },
-        ClientMsg::Hello { .. } | ClientMsg::Ping => Ok(()),
+        ClientMsg::Volume { a, value } => match actions::volume(a, value).await {
+            Ok(()) => Ok(actions::get_volume().await.into_iter().collect()),
+            Err(e) => Err(e),
+        },
+        ClientMsg::Power { a } => {
+            info!(action = ?a, "power action from phone");
+            actions::power(a, &st.cfg.power).await.map(|msg| vec![ServerMsg::Info { msg }])
+        }
+        ClientMsg::Cmd { id } => {
+            info!(command = %id, "custom command from phone");
+            actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])
+        }
+        input => handle_input(st, input).map(|r| r.into_iter().collect()),
     };
-    result.err().map(|e| ServerMsg::Error { msg: format!("{e:#}") })
+    result.unwrap_or_else(|e| vec![ServerMsg::Error { msg: format!("{e:#}") }])
+}
+
+async fn refresh() -> Vec<ServerMsg> {
+    let (volume, media) = tokio::join!(actions::get_volume(), actions::now_playing());
+    volume.into_iter().chain([media]).collect()
+}
+
+fn handle_input(st: &AppState, msg: ClientMsg) -> anyhow::Result<Option<ServerMsg>> {
+    let mut input = st.input.lock().unwrap();
+    match msg {
+        ClientMsg::Move { dx, dy } => input.move_by(dx, dy)?,
+        ClientMsg::Scroll { dx, dy } => input.scroll(dx, dy)?,
+        ClientMsg::Button { b, s } => input.button(b, s)?,
+        ClientMsg::Key { k, mods, s } => input.key(&k, &mods, s)?,
+        ClientMsg::Text { s } => {
+            let skipped = input.type_text(&s)?;
+            if !skipped.is_empty() {
+                let s: String = skipped.into_iter().collect();
+                return Ok(Some(ServerMsg::Error { msg: format!("can't type {s:?} with this keyboard layout") }));
+            }
+        }
+        _ => {}
+    }
+    Ok(None)
 }

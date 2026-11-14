@@ -38,6 +38,38 @@ pub struct Config {
     pub bind: String,
     pub keyboard: KeyboardConfig,
     pub pointer: PointerConfig,
+    pub power: PowerConfig,
+    pub commands: Vec<CommandConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PowerConfig {
+    /// Allow lock / suspend / reboot / power off from the phone.
+    pub enabled: bool,
+    /// Shell command that locks the screen.
+    pub lock: String,
+}
+
+impl Default for PowerConfig {
+    fn default() -> Self {
+        // Launched through Hyprland so the lock screen isn't tied to vulcand's lifetime.
+        Self { enabled: true, lock: "hyprctl dispatch exec hyprlock".into() }
+    }
+}
+
+/// A button on the phone's Controls tab that runs a shell command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandConfig {
+    pub name: String,
+    pub run: String,
+    /// SF Symbol name shown on the phone.
+    #[serde(default = "default_icon")]
+    pub icon: String,
+}
+
+fn default_icon() -> String {
+    "terminal".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +99,8 @@ impl Default for Config {
             bind: "0.0.0.0".into(),
             keyboard: KeyboardConfig::default(),
             pointer: PointerConfig::default(),
+            power: PowerConfig::default(),
+            commands: Vec::new(),
         }
     }
 }
@@ -99,6 +133,23 @@ options = ""
 sensitivity = 1.5    # phone points -> pixels
 acceleration = 0.4   # extra gain on fast swipes, 0 = linear
 scroll_speed = 4.0   # wheel units per point (120 = one notch)
+
+[power]
+enabled = true                           # lock / suspend / reboot / power off from the phone
+lock = "hyprctl dispatch exec hyprlock"
+
+# Buttons on the phone's Controls tab. `icon` is an SF Symbol name.
+# Launch apps through `hyprctl dispatch exec ...` so they don't belong to vulcand.
+#
+# [[commands]]
+# name = "Workspace 1"
+# icon = "1.square"
+# run = "hyprctl dispatch workspace 1"
+#
+# [[commands]]
+# name = "Browser"
+# icon = "globe"
+# run = "hyprctl dispatch exec zen-browser"
 "#;
 
 impl Config {

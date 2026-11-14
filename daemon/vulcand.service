@@ -7,6 +7,8 @@ After=graphical-session.target
 ExecStart=%h/.local/bin/vulcand serve
 Restart=on-failure
 RestartSec=2
+# Leave apps started by custom commands running if vulcand restarts.
+KillMode=process
 
 [Install]
 WantedBy=graphical-session.target

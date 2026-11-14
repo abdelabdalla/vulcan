@@ -1,3 +1,4 @@
+mod actions;
 mod auth;
 mod config;
 mod input;
