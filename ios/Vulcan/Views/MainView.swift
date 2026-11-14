@@ -4,6 +4,7 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
     @State private var keyboardUp = false
     @State private var showSettings = false
+    @AppStorage(Settings.volumeButtons) private var volumeButtons = true
     @State private var tab = Mode.trackpad
 
     enum Mode {
@@ -37,6 +38,14 @@ struct MainView: View {
         }
         .animation(.default, value: conn.toast)
         .sheet(isPresented: $showSettings) { SettingsView() }
+        // Hidden; turns the phone's volume buttons into PC volume ±5% while connected.
+        .background(
+            VolumeButtons(active: volumeButtons && conn.isConnected && !conn.paused) { up in
+                conn.send(.volume(up ? .up : .down))
+            }
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+        )
     }
 
     @ViewBuilder
