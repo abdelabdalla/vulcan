@@ -15,8 +15,14 @@ struct VulcanApp: App {
                 .environment(model)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
-                // Pairing links scanned with the system Camera app open here.
-                .onOpenURL { model.pair(with: $0) }
+                // Pairing links scanned with the Camera app, and files shared via "Open in Vulcan".
+                .onOpenURL { url in
+                    if url.isFileURL {
+                        model.transfers.upload(copying: url)
+                    } else {
+                        model.pair(with: url)
+                    }
+                }
         }
     }
 }

@@ -2252,6 +2252,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
  "tracing-subscriber",

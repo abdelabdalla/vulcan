@@ -93,6 +93,28 @@ Two manual actions always work, whatever the toggles say:
 
 Content is identified by hash, so a copy never bounces back to where it came from. The PC side uses `wl-paste --watch` and `wl-copy`. Images over 20 MB don't sync.
 
+### File transfer
+
+Transfers use HTTPS on the same port, certificate and pairing token as the WebSocket. They only run while the app is open.
+
+**Phone → PC:** files land in `~/Downloads/Vulcan`, and a name that's already taken gets ` (1)` added. A desktop notification has a **Show in folder** button. To send:
+
+- use the app's Files tab (Photos or Files picker)
+- or choose **Share → Vulcan** from any app
+
+**PC → phone:** queue files in any of these ways:
+
+- right-click files in Dolphin → **Send to iPhone**. Install this once with `vulcand install-dolphin`.
+- the tray's **Send file to phone…**
+- `vulcand send <files>`
+
+Queued files download automatically when the app is open, and stay queued for 24 hours otherwise. On the phone:
+
+- images and videos go to Photos
+- everything else goes to **Files › On My iPhone › Vulcan › Received**
+
+**Browsing:** the Files tab can browse your home folder and download from it. It's read-only. Hidden files and folders are listed only when **Show hidden** is on. Paths that lead outside home, including through symlinks, are refused.
+
 ### Switching USB devices off
 
 Some devices' lights have no software control: the Cooler Master Quickfire TK keyboard, for example. Vulcan can disconnect such a device instead. Disconnecting deauthorizes the device and lets the kernel suspend it, which cuts it to standby power so its lights go off. Reconnecting brings it back.
@@ -117,7 +139,14 @@ The phone and PC exchange JSON text frames over `wss://<pc>:47800/ws`. The first
 
 | Direction | Messages |
 |---|---|
-| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `usb{name,on?}`, `clip_set{kind,text?,mime?,data?,auto}`, `clip_get`, `clip_settings{to_phone?,to_pc?}`, `cmd{id}`, `refresh`, `ping` |
-| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `usb_devices{devices}`, `clip{kind,text?,mime?,data?,hash}`, `clip_settings{to_phone,to_pc}`, `paused{paused}`, `pong` |
+| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `usb{name,on?}`, `clip_set{kind,text?,mime?,data?,auto}`, `clip_get`, `clip_settings{to_phone?,to_pc?}`, `file_done{id}`, `cmd{id}`, `refresh`, `ping` |
+| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `usb_devices{devices}`, `clip{kind,text?,mime?,data?,hash}`, `clip_settings{to_phone,to_pc}`, `file_offer{id,name,size}`, `paused{paused}`, `pong` |
+
+The HTTPS endpoints all need `Authorization: Bearer <token>`:
+
+- `POST /files/upload?name=`
+- `GET /files/<offer id>`
+- `GET /fs/list?path=&hidden=`
+- `GET /fs/download?path=&hidden=`
 
 See [`daemon/src/protocol.rs`](daemon/src/protocol.rs) for the full definitions.

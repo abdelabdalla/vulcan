@@ -97,6 +97,14 @@ pub enum ClipKind {
     Image,
 }
 
+/// A file the PC has queued for the phone; download it from `/files/<id>`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OfferInfo {
+    pub id: String,
+    pub name: String,
+    pub size: u64,
+}
+
 /// A custom command from the config, as shown on the phone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandInfo {
@@ -160,6 +168,8 @@ pub enum ClientMsg {
     },
     /// Ask for the PC's current clipboard.
     ClipGet,
+    /// The phone has downloaded (or given up on) a file offer.
+    FileDone { id: String },
     /// Change the auto-sync settings (shared with the tray).
     ClipSettings {
         #[serde(default)]
@@ -206,6 +216,8 @@ pub enum ServerMsg {
         hash: String,
     },
     ClipSettings { to_phone: bool, to_pc: bool },
+    /// A file queued for the phone (sent on connect for anything still pending).
+    FileOffer { id: String, name: String, size: u64 },
     Paused { paused: bool },
     Pong,
 }

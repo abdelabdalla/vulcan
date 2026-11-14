@@ -7,7 +7,7 @@ struct MainView: View {
     @State private var tab = Mode.trackpad
 
     enum Mode {
-        case trackpad, controls
+        case trackpad, controls, files
     }
 
     private var conn: ConnectionManager { model.connection }
@@ -16,10 +16,10 @@ struct MainView: View {
         VStack(spacing: 0) {
             StatusBar(showSettings: $showSettings, tab: $tab)
 
-            if tab == .controls {
-                ControlsView()
-            } else {
-                trackpad
+            switch tab {
+            case .trackpad: trackpad
+            case .controls: ControlsView()
+            case .files: FilesView()
             }
         }
         .onChange(of: tab) { _, _ in keyboardUp = false }
@@ -91,9 +91,10 @@ private struct StatusBar: View {
             Picker("Mode", selection: $tab) {
                 Image(systemName: "hand.point.up.left").tag(MainView.Mode.trackpad)
                 Image(systemName: "slider.horizontal.3").tag(MainView.Mode.controls)
+                Image(systemName: "folder").tag(MainView.Mode.files)
             }
             .pickerStyle(.segmented)
-            .frame(width: 110)
+            .frame(width: 150)
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill").font(.title3)
             }
