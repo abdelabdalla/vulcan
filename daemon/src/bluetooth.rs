@@ -148,6 +148,11 @@ async fn run(st: &Arc<AppState>) -> Result<()> {
                 Some(CharacteristicControlEvent::Notify(notifier)) => {
                     debug!(mtu = notifier.mtu(), device = %notifier.device_address(), "Bluetooth TX subscribed");
                     writer = Some(notifier);
+                    // A new subscription is a new app connection. The phone's Bluetooth link to the
+                    // PC can outlive the app's (it stays up for notifications), so end any old session.
+                    to_session = None;
+                    from_session = None;
+                    reassembler = Reassembler::default();
                 }
                 Some(_) => {}
                 None => anyhow::bail!("GATT application stopped"),
@@ -171,8 +176,10 @@ async fn run(st: &Arc<AppState>) -> Result<()> {
                 };
                 let Some(msg) = reassembler.push(&packet) else { continue };
                 let Ok(text) = String::from_utf8(msg) else { continue };
-                // First message of a new connection: start a session (it checks the token).
-                if to_session.as_ref().is_none_or(|t| t.is_closed()) {
+                // A hello always starts a fresh session (it checks the token); so does the first
+                // message after the old one ended.
+                let is_hello = text.contains(r#""t":"hello""#);
+                if is_hello || to_session.as_ref().is_none_or(|t| t.is_closed()) {
                     let (in_tx, in_rx) = mpsc::channel(64);
                     let (out_tx, out_rx) = mpsc::channel(64);
                     let peer = writer.as_ref().map_or_else(|| "Bluetooth".to_string(), |w| format!("bt:{}", w.device_address()));
