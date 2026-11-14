@@ -154,7 +154,7 @@ final class TransferManager {
         transfers.append(transfer)
         let id = transfer.id
 
-        let task = session.downloadTask(with: req) { location, response, error in
+        let task = session.downloadTask(with: req) { [weak self] location, response, error in
             // The temp file is removed when this handler returns, so move it now.
             var moved: URL?
             var failure: String?
@@ -173,7 +173,7 @@ final class TransferManager {
                     failure = error.localizedDescription
                 }
             }
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 guard let self else { return }
                 self.observations[id] = nil
                 if let moved {
@@ -279,7 +279,7 @@ final class TransferManager {
             transfers.append(t)
             id = t.id
         }
-        let task = session.uploadTask(with: req, fromFile: file) { data, response, error in
+        let task = session.uploadTask(with: req, fromFile: file) { [weak self] data, response, error in
             try? FileManager.default.removeItem(at: file)
             let result: Result<String, Error>
             if let error {
@@ -293,7 +293,7 @@ final class TransferManager {
                     result = .failure(error)
                 }
             }
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 self?.observations[id] = nil
                 self?.update(id) {
                     switch result {
@@ -317,9 +317,9 @@ final class TransferManager {
     // MARK: Progress
 
     private func observe(_ task: URLSessionTask, id: UUID) {
-        observations[id] = task.progress.observe(\.fractionCompleted) { progress, _ in
+        observations[id] = task.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
             let fraction = progress.fractionCompleted
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 self?.update(id) { if case .running = $0.state { $0.progress = fraction } }
             }
         }
