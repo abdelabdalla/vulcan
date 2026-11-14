@@ -4,7 +4,7 @@ PartOf=graphical-session.target
 After=graphical-session.target
 
 [Service]
-ExecStart=%h/.cargo/bin/vulcand serve
+ExecStart=%h/.local/bin/vulcand serve
 Restart=on-failure
 RestartSec=2
 

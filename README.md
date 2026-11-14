@@ -10,7 +10,7 @@ Vulcan lets you control a Linux PC (running Hyprland on Wayland) from an iPhone 
 ## PC setup
 
 ```sh
-cargo install --path daemon --locked
+cargo install --path daemon --locked --root ~/.local   # -> ~/.local/bin/vulcand
 mkdir -p ~/.config/systemd/user
 cp daemon/vulcand.service ~/.config/systemd/user/
 systemctl --user daemon-reload
