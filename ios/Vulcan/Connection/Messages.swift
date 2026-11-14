@@ -24,7 +24,7 @@ enum VolumeAction: String {
 }
 
 enum DisplayAction: String {
-    case off, on
+    case off, on, toggle
 }
 
 enum PowerAction: String, Identifiable {

@@ -131,26 +131,43 @@ async fn hypr_option(section: &str, key: &str, value: &str) -> Result<()> {
     hypr(&["keyword", &format!("{section}:{key}"), value]).await
 }
 
-async fn dpms(state: &str) -> Result<()> {
-    if hypr(&["dispatch", &format!("hl.dsp.dpms(\"{state}\")")]).await.is_ok() {
+async fn dpms(on: bool) -> Result<()> {
+    let state = if on { "on" } else { "off" };
+    // Lua config takes a table; a bare string argument is ignored and toggles instead.
+    if hypr(&["dispatch", &format!("hl.dsp.dpms({{ action = \"{state}\" }})")]).await.is_ok() {
         return Ok(());
     }
     hypr(&["dispatch", "dpms", state]).await
 }
 
+/// DPMS state of each monitor, from `hyprctl monitors -j`.
+async fn screens_on() -> Result<Vec<bool>> {
+    let out = run("hyprctl", &["monitors", "-j"]).await?;
+    let monitors: Vec<serde_json::Value> = serde_json::from_str(&out).context("parsing hyprctl monitors")?;
+    Ok(monitors.iter().map(|m| m["dpmsStatus"].as_bool().unwrap_or(true)).collect())
+}
+
 /// Monitors off/on via Hyprland DPMS, without suspending.
 pub async fn display(a: DisplayAction) -> Result<String> {
-    match a {
-        DisplayAction::Off => {
-            // Hyprland's defaults don't wake on input; let any key press or mouse movement
-            // (physical or from the phone) bring the screens back.
-            hypr_option("misc", "key_press_enables_dpms", "true").await?;
-            hypr_option("misc", "mouse_move_enables_dpms", "true").await?;
-            dpms("off").await?;
-            Ok("Screens off. Move the mouse or press a key to wake them".into())
-        }
-        DisplayAction::On => dpms("on").await.map(|_| "Screens on".into()),
+    let turn_on = match a {
+        DisplayAction::On => true,
+        DisplayAction::Off => false,
+        DisplayAction::Toggle => !screens_on().await?.iter().any(|&on| on),
+    };
+    if !turn_on {
+        // Hyprland's defaults don't wake on input; let any key press or mouse movement
+        // (physical or from the phone) bring the screens back.
+        hypr_option("misc", "key_press_enables_dpms", "true").await?;
+        hypr_option("misc", "mouse_move_enables_dpms", "true").await?;
     }
+    dpms(turn_on).await?;
+    // hyprctl can report "ok" for a dispatcher that did nothing; check the result.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let now = screens_on().await?;
+    if now.iter().any(|&on| on != turn_on) {
+        bail!("screens didn't switch {} (DPMS state: {now:?})", if turn_on { "on" } else { "off" });
+    }
+    Ok(if turn_on { "Screens on".into() } else { "Screens off. Tap Screen, move the mouse or press a key to wake them".into() })
 }
 
 /// Only commands defined in the config can run; the phone just names one.

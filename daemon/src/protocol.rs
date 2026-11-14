@@ -52,6 +52,8 @@ pub enum VolumeAction {
 pub enum DisplayAction {
     Off,
     On,
+    /// Off if any monitor is on, otherwise on.
+    Toggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -150,8 +152,8 @@ mod tests {
         assert_eq!(m, ClientMsg::Volume { a: VolumeAction::Set, value: Some(0.4) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"power","a":"poweroff"}"#).unwrap();
         assert_eq!(m, ClientMsg::Power { a: PowerAction::Poweroff });
-        let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"off"}"#).unwrap();
-        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Off });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"toggle"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Toggle });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
     }

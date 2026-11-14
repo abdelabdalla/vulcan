@@ -16,8 +16,7 @@ struct ControlsView: View {
             VStack(spacing: 14) {
                 nowPlaying
                 volume
-                if conn.caps.contains("display") { display }
-                if conn.caps.contains("power") { power }
+                if conn.caps.contains("power") || conn.caps.contains("display") { power }
                 commands
             }
             .padding(12)
@@ -108,22 +107,17 @@ struct ControlsView: View {
         }
     }
 
-    private var display: some View {
-        Card(title: "Screens", icon: "display") {
-            HStack(spacing: 10) {
-                PowerButton(title: "Screens off", icon: "moon.zzz.fill") { conn.send(.display(.off)) }
-                PowerButton(title: "Screens on", icon: "sun.max.fill") { conn.send(.display(.on)) }
-            }
-        }
-    }
-
     private var power: some View {
         Card(title: "Power", icon: "power") {
             HStack(spacing: 10) {
-                PowerButton(title: "Lock", icon: "lock.fill") { conn.send(.power(.lock)) }
-                PowerButton(title: "Sleep", icon: "moon.fill") { confirming = .suspend }
-                PowerButton(title: "Restart", icon: "arrow.clockwise") { confirming = .reboot }
-                PowerButton(title: "Shut down", icon: "power", destructive: true) { confirming = .poweroff }
+                if conn.caps.contains("display") {
+                    PowerButton(title: "Screen", icon: "display") { conn.send(.display(.toggle)) }
+                }
+                if conn.caps.contains("power") {
+                    PowerButton(title: "Lock", icon: "lock.fill") { conn.send(.power(.lock)) }
+                    PowerButton(title: "Restart", icon: "arrow.clockwise") { confirming = .reboot }
+                    PowerButton(title: "Shut down", icon: "power", destructive: true) { confirming = .poweroff }
+                }
             }
         }
     }
