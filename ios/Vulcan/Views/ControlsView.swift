@@ -16,6 +16,7 @@ struct ControlsView: View {
             VStack(spacing: 14) {
                 nowPlaying
                 volume
+                if conn.caps.contains("display") { display }
                 if conn.caps.contains("power") { power }
                 commands
             }
@@ -104,6 +105,15 @@ struct ControlsView: View {
                 Button { conn.send(.volume(.up)) } label: { Label("+5%", systemImage: "plus") }
             }
             .buttonStyle(.bordered)
+        }
+    }
+
+    private var display: some View {
+        Card(title: "Screens", icon: "display") {
+            HStack(spacing: 10) {
+                PowerButton(title: "Screens off", icon: "moon.zzz.fill") { conn.send(.display(.off)) }
+                PowerButton(title: "Screens on", icon: "sun.max.fill") { conn.send(.display(.on)) }
+            }
         }
     }
 

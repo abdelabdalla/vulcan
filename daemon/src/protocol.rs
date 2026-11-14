@@ -49,6 +49,13 @@ pub enum VolumeAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DisplayAction {
+    Off,
+    On,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PowerAction {
     Lock,
     Suspend,
@@ -92,6 +99,8 @@ pub enum ClientMsg {
         value: Option<f64>,
     },
     Power { a: PowerAction },
+    /// Turn the monitors off or on without suspending.
+    Display { a: DisplayAction },
     /// Run a custom command from the config by id.
     Cmd { id: String },
     /// Ask for current volume and now-playing info.
@@ -141,6 +150,8 @@ mod tests {
         assert_eq!(m, ClientMsg::Volume { a: VolumeAction::Set, value: Some(0.4) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"power","a":"poweroff"}"#).unwrap();
         assert_eq!(m, ClientMsg::Power { a: PowerAction::Poweroff });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"off"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Display { a: DisplayAction::Off });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
     }

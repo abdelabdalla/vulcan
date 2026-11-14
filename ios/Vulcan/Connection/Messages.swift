@@ -23,6 +23,10 @@ enum VolumeAction: String {
     case up, down, mute, set
 }
 
+enum DisplayAction: String {
+    case off, on
+}
+
 enum PowerAction: String, Identifiable {
     case lock, suspend, reboot, poweroff
     var id: String { rawValue }
@@ -45,6 +49,7 @@ enum ClientMessage: Encodable {
     case media(MediaAction)
     case volume(VolumeAction, value: Double? = nil)
     case power(PowerAction)
+    case display(DisplayAction)
     case cmd(String)
     case refresh
     case ping
@@ -100,6 +105,9 @@ enum ClientMessage: Encodable {
             try c.encodeIfPresent(value, forKey: .value)
         case let .power(a):
             try c.encode("power", forKey: .t)
+            try c.encode(a.rawValue, forKey: .a)
+        case let .display(a):
+            try c.encode("display", forKey: .t)
             try c.encode(a.rawValue, forKey: .a)
         case let .cmd(id):
             try c.encode("cmd", forKey: .t)

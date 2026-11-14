@@ -53,8 +53,8 @@ pub struct PowerConfig {
 
 impl Default for PowerConfig {
     fn default() -> Self {
-        // Launched through Hyprland so the lock screen isn't tied to vulcand's lifetime.
-        Self { enabled: true, lock: "hyprctl dispatch exec hyprlock".into() }
+        // hypridle runs its lock_cmd, so the lock screen isn't tied to vulcand's lifetime.
+        Self { enabled: true, lock: "loginctl lock-session".into() }
     }
 }
 
@@ -136,20 +136,15 @@ scroll_speed = 4.0   # wheel units per point (120 = one notch)
 
 [power]
 enabled = true                           # lock / suspend / reboot / power off from the phone
-lock = "hyprctl dispatch exec hyprlock"
+lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts hyprlock)
 
 # Buttons on the phone's Controls tab. `icon` is an SF Symbol name.
-# Launch apps through `hyprctl dispatch exec ...` so they don't belong to vulcand.
+# Launch apps through Hyprland so they don't belong to vulcand.
 #
 # [[commands]]
-# name = "Workspace 1"
-# icon = "1.square"
-# run = "hyprctl dispatch workspace 1"
-#
-# [[commands]]
-# name = "Browser"
-# icon = "globe"
-# run = "hyprctl dispatch exec zen-browser"
+# name = "VS Code"
+# icon = "chevron.left.forwardslash.chevron.right"
+# run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 "#;
 
 impl Config {

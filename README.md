@@ -61,16 +61,16 @@ The config lives at `~/.config/vulcan/config.toml` and is created on first run:
 | `pointer.acceleration` | 0.4 | Extra speed for fast swipes |
 | `pointer.scroll_speed` | 4.0 | Scroll speed |
 | `power.enabled` | `true` | Allow lock, sleep, restart and shut down from the phone |
-| `power.lock` | `hyprctl dispatch exec hyprlock` | The command that locks the screen |
+| `power.lock` | `loginctl lock-session` | The command that locks the screen. The default needs hypridle running, because hypridle's `lock_cmd` is what starts hyprlock. |
 | `[[commands]]` | none | Buttons on the phone's Controls tab. Each has a `name`, a `run` command and an optional `icon` (an SF Symbol name). |
 
-Custom commands run through `sh -c`, and only the commands listed in the config can run. Start apps with `hyprctl dispatch exec <app>`, so that Hyprland owns them rather than vulcand:
+Custom commands run through `sh -c`, and only the commands listed in the config can run. Start apps through Hyprland, so that Hyprland owns them rather than vulcand. With the Lua config:
 
 ```toml
 [[commands]]
-name = "Workspace 2"
-icon = "2.square"
-run = "hyprctl dispatch workspace 2"
+name = "VS Code"
+icon = "chevron.left.forwardslash.chevron.right"
+run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 ```
 
 ## Protocol
@@ -79,7 +79,7 @@ The phone and PC exchange JSON text frames over `wss://<pc>:47800/ws`. The first
 
 | Direction | Messages |
 |---|---|
-| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `cmd{id}`, `refresh`, `ping` |
+| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a}`, `cmd{id}`, `refresh`, `ping` |
 | PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `paused{paused}`, `pong` |
 
 See [`daemon/src/protocol.rs`](daemon/src/protocol.rs) for the full definitions.

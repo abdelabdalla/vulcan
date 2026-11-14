@@ -100,7 +100,7 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     };
 
     info!(%addr, device = %name, "connected");
-    let mut caps = vec!["input".to_string(), "media".into(), "volume".into(), "commands".into()];
+    let mut caps = vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into()];
     if st.cfg.power.enabled {
         caps.push("power".into());
     }
@@ -205,6 +205,7 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
             info!(action = ?a, "power action from phone");
             actions::power(a, &st.cfg.power).await.map(|msg| vec![ServerMsg::Info { msg }])
         }
+        ClientMsg::Display { a } => actions::display(a).await.map(|msg| vec![ServerMsg::Info { msg }]),
         ClientMsg::Cmd { id } => {
             info!(command = %id, "custom command from phone");
             actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])

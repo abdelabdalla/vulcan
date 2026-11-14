@@ -7,7 +7,7 @@ use anyhow::{Context, Result, bail};
 use tokio::process::Command;
 
 use crate::config::{CommandConfig, PowerConfig};
-use crate::protocol::{MediaAction, PowerAction, ServerMsg, VolumeAction};
+use crate::protocol::{DisplayAction, MediaAction, PowerAction, ServerMsg, VolumeAction};
 
 const SINK: &str = "@DEFAULT_AUDIO_SINK@";
 
@@ -110,6 +110,46 @@ pub async fn power(a: PowerAction, cfg: &PowerConfig) -> Result<String> {
         PowerAction::Suspend => run("systemctl", &["suspend"]).await.map(|_| "Suspending the PC".into()),
         PowerAction::Reboot => run("systemctl", &["reboot"]).await.map(|_| "Rebooting the PC".into()),
         PowerAction::Poweroff => run("systemctl", &["poweroff"]).await.map(|_| "Shutting down the PC".into()),
+    }
+}
+
+/// hyprctl reports most failures on stdout with exit status 0, so require "ok".
+async fn hypr(args: &[&str]) -> Result<()> {
+    let out = run("hyprctl", args).await?;
+    if out.trim() != "ok" {
+        bail!("hyprctl {}: {}", args.join(" "), out.trim());
+    }
+    Ok(())
+}
+
+/// Set a Hyprland option for the running session (Lua config first, then the legacy keyword).
+async fn hypr_option(section: &str, key: &str, value: &str) -> Result<()> {
+    let lua = format!("hl.config({{ {section} = {{ {key} = {value} }} }})");
+    if hypr(&["eval", &lua]).await.is_ok() {
+        return Ok(());
+    }
+    hypr(&["keyword", &format!("{section}:{key}"), value]).await
+}
+
+async fn dpms(state: &str) -> Result<()> {
+    if hypr(&["dispatch", &format!("hl.dsp.dpms(\"{state}\")")]).await.is_ok() {
+        return Ok(());
+    }
+    hypr(&["dispatch", "dpms", state]).await
+}
+
+/// Monitors off/on via Hyprland DPMS, without suspending.
+pub async fn display(a: DisplayAction) -> Result<String> {
+    match a {
+        DisplayAction::Off => {
+            // Hyprland's defaults don't wake on input; let any key press or mouse movement
+            // (physical or from the phone) bring the screens back.
+            hypr_option("misc", "key_press_enables_dpms", "true").await?;
+            hypr_option("misc", "mouse_move_enables_dpms", "true").await?;
+            dpms("off").await?;
+            Ok("Screens off. Move the mouse or press a key to wake them".into())
+        }
+        DisplayAction::On => dpms("on").await.map(|_| "Screens on".into()),
     }
 }
 

@@ -56,6 +56,8 @@ final class VulcanTests: XCTestCase {
         XCTAssertNil(try object(.volume(.up))["value"], "no value key unless setting")
 
         XCTAssertEqual(try object(.power(.poweroff))["a"] as? String, "poweroff")
+        XCTAssertEqual(try object(.display(.off))["t"] as? String, "display")
+        XCTAssertEqual(try object(.display(.off))["a"] as? String, "off")
         XCTAssertEqual(try object(.cmd("Workspace 2"))["id"] as? String, "Workspace 2")
         XCTAssertTrue(ClientMessage.refresh.allowedWhilePaused)
         XCTAssertFalse(ClientMessage.media(.next).allowedWhilePaused)
