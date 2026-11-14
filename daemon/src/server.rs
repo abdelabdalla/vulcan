@@ -43,6 +43,8 @@ pub struct AppState {
     /// Files queued for the phone.
     pub offers: Offers,
     pub cursor: Option<crate::cursor::CursorBoost>,
+    /// iPhone notifications over Bluetooth (None when disabled).
+    pub phone_link: Option<Arc<crate::ancs::PhoneLink>>,
 }
 
 impl AppState {

@@ -55,6 +55,17 @@ impl VulcanTray {
         }
     }
 
+    fn notification_status(&self) -> String {
+        use crate::ancs::LinkState;
+        match self.st.phone_link.as_ref().map(|l| l.state()) {
+            None => "iPhone notifications: off".into(),
+            Some(LinkState::Starting) => "iPhone notifications: starting…".into(),
+            Some(LinkState::Waiting) => "iPhone notifications: waiting for iPhone".into(),
+            Some(LinkState::Connected(name)) => format!("iPhone notifications: {name}"),
+            Some(LinkState::Unavailable(_)) => "iPhone notifications: Bluetooth unavailable".into(),
+        }
+    }
+
     fn summary(&self) -> String {
         let conn = if self.status.connected.is_empty() {
             "No phone connected".to_string()
@@ -145,6 +156,24 @@ impl ksni::Tray for VulcanTray {
             }
             .into(),
             MenuItem::Separator,
+            StandardItem {
+                label: self.notification_status(),
+                enabled: false,
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Pair iPhone for notifications…".into(),
+                icon_name: "bluetooth".into(),
+                visible: self.st.phone_link.is_some(),
+                activate: Box::new(|t: &mut Self| {
+                    if let Some(link) = &t.st.phone_link {
+                        link.open_pairing();
+                    }
+                }),
+                ..Default::default()
+            }
+            .into(),
             StandardItem {
                 label: "Send file to phone…".into(),
                 icon_name: "document-send".into(),

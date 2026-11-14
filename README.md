@@ -118,6 +118,21 @@ Queued files download automatically when the app is open, and stay queued for 24
 
 **Browsing:** the Files tab can browse your home folder and download from it. It's read-only. Images and videos show previews, which the PC takes from Dolphin's thumbnail cache or renders with ImageMagick or ffmpeg. **Select** lets you pick several files and folders at once. A folder downloads whole into **Files › Vulcan › Received**, keeping its structure. Hidden files and folders are listed only when **Show hidden** is on. Paths that lead outside home, including through symlinks, are refused.
 
+### iPhone notifications on the PC
+
+iPhone notifications appear as desktop notifications through Apple's notification protocol (ANCS) over Bluetooth LE, the same way a smartwatch gets them. This needs no app: it works whenever the phone is in Bluetooth range.
+
+To pair once:
+
+1. In the tray, choose **Pair iPhone for notifications…**. This makes the PC pairable and discoverable for 2 minutes.
+2. On the iPhone, go to **Settings → Bluetooth** and tap the PC.
+3. Accept the code and allow notifications.
+4. Tap ⓘ next to the PC and turn on **Share System Notifications**.
+
+After that, the phone reconnects by itself. Notifications that were already on the phone when it connected are skipped. Dismissing a notification on the phone closes it on the PC.
+
+To turn this off, set `[notifications] enabled = false` in the config.
+
 ### Switching USB devices off
 
 Some devices' lights have no software control: the Cooler Master Quickfire TK keyboard, for example. Vulcan can disconnect such a device instead. Disconnecting deauthorizes the device and lets the kernel suspend it, which cuts it to standby power so its lights go off. Reconnecting brings it back.
