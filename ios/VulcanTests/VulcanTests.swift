@@ -108,6 +108,9 @@ final class VulcanTests: XCTestCase {
         XCTAssertEqual(offer.size, 12)
         let listing = try JSONDecoder().decode(PCListing.self, from: Data(#"{"path":"","entries":[{"name":"Documents","dir":true,"size":0,"modified":1}],"truncated":false}"#.utf8))
         XCTAssertEqual(listing.entries.first?.dir, true)
+        let walk = try JSONDecoder().decode(PCWalk.self, from: Data(#"{"files":[{"path":"Pics/2024/b.jpg","rel":"Pics/2024/b.jpg","size":3}],"total":3,"truncated":false}"#.utf8))
+        XCTAssertEqual(walk.files.first?.rel, "Pics/2024/b.jpg")
+        XCTAssertEqual(walk.total, 3)
         let media = try XCTUnwrap(ServerMessage.parse(#"{"t":"media","status":"Playing","title":"S","artist":"A","player":"spotify"}"#))
         XCTAssertEqual(media.status, "Playing")
     }

@@ -121,6 +121,9 @@ private struct TransferRow: View {
                     Text("Waiting for the PC…").font(.caption).foregroundStyle(.secondary)
                 case .running:
                     ProgressView(value: transfer.progress)
+                    if let detail = transfer.detail {
+                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                    }
                 case let .done(text):
                     Text(text).font(.caption).foregroundStyle(.secondary)
                 case let .failed(text):
@@ -139,7 +142,7 @@ private struct TransferRow: View {
     }
 }
 
-/// Read-only listing of a folder in the PC's home directory.
+/// Read-only listing of a folder in the PC's home directory, with multi-select downloads.
 struct BrowserView: View {
     @Environment(AppModel.self) private var model
     let path: String
@@ -148,29 +151,19 @@ struct BrowserView: View {
     @AppStorage("browseHidden") private var showHidden = false
     @State private var listing: PCListing?
     @State private var error: String?
+    @State private var editMode: EditMode = .inactive
+    @State private var selection = Set<String>()
+
+    private var selecting: Bool { editMode.isEditing }
 
     var body: some View {
-        List {
+        List(selection: $selection) {
             if let error {
                 Text(error).foregroundStyle(.red)
             }
             if let listing {
                 ForEach(listing.entries) { entry in
-                    if entry.dir {
-                        NavigationLink {
-                            BrowserView(path: join(entry.name), title: entry.name)
-                        } label: {
-                            Label(entry.name, systemImage: "folder.fill")
-                        }
-                    } else {
-                        Button {
-                            model.transfers.downloadFromPC(path: join(entry.name), name: entry.name, hidden: showHidden)
-                            model.connection.showInfo("Downloading \(entry.name)")
-                        } label: {
-                            FileRow(entry: entry)
-                        }
-                        .tint(.primary)
-                    }
+                    row(entry).tag(entry.name)
                 }
                 if listing.entries.isEmpty {
                     Text("Empty folder").foregroundStyle(.secondary)
@@ -182,19 +175,90 @@ struct BrowserView: View {
                 ProgressView()
             }
         }
-        .navigationTitle(title)
+        .environment(\.editMode, $editMode)
+        .navigationTitle(selecting ? (selection.isEmpty ? "Select items" : "\(selection.count) selected") : title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Toggle("Show hidden", isOn: $showHidden)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                Button(selecting ? "Done" : "Select") {
+                    withAnimation {
+                        editMode = selecting ? .inactive : .active
+                        selection = []
+                    }
+                }
+                .disabled(listing?.entries.isEmpty ?? true)
+            }
+            if !selecting {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Toggle("Show hidden", isOn: $showHidden)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            if selecting {
+                ToolbarItemGroup(placement: .bottomBar) {
+                    let all = Set(listing?.entries.map(\.name) ?? [])
+                    Button(selection == all ? "Deselect all" : "Select all") {
+                        selection = selection == all ? [] : all
+                    }
+                    Spacer()
+                    Button {
+                        downloadSelected()
+                    } label: {
+                        Label("Download", systemImage: "arrow.down.circle")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .disabled(selection.isEmpty)
                 }
             }
         }
         .task(id: showHidden) { await load() }
         .refreshable { await load() }
+    }
+
+    @ViewBuilder
+    private func row(_ entry: PCListing.Entry) -> some View {
+        if selecting {
+            // While selecting, a tap toggles the checkmark instead of opening or downloading.
+            if entry.dir {
+                FolderRow(name: entry.name)
+            } else {
+                FileRow(entry: entry, path: join(entry.name), hidden: showHidden)
+            }
+        } else if entry.dir {
+            NavigationLink {
+                BrowserView(path: join(entry.name), title: entry.name)
+            } label: {
+                FolderRow(name: entry.name)
+            }
+        } else {
+            Button {
+                model.transfers.downloadFromPC(path: join(entry.name), name: entry.name, hidden: showHidden)
+                model.connection.showInfo("Downloading \(entry.name)")
+            } label: {
+                FileRow(entry: entry, path: join(entry.name), hidden: showHidden)
+            }
+            .tint(.primary)
+        }
+    }
+
+    private func downloadSelected() {
+        guard let listing else { return }
+        let chosen = listing.entries.filter { selection.contains($0.name) }
+        for entry in chosen {
+            if entry.dir {
+                model.transfers.downloadFolder(path: join(entry.name), name: entry.name, hidden: showHidden)
+            } else {
+                model.transfers.downloadFromPC(path: join(entry.name), name: entry.name, hidden: showHidden)
+            }
+        }
+        model.connection.showInfo(chosen.count == 1 ? "Downloading \(chosen[0].name)" : "Downloading \(chosen.count) items")
+        withAnimation {
+            editMode = .inactive
+            selection = []
+        }
     }
 
     private func join(_ name: String) -> String {
@@ -211,12 +275,35 @@ struct BrowserView: View {
     }
 }
 
-private struct FileRow: View {
-    let entry: PCListing.Entry
+private struct FolderRow: View {
+    let name: String
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).foregroundStyle(.secondary).frame(width: 24)
+            Image(systemName: "folder.fill")
+                .font(.title3)
+                .foregroundStyle(Theme.accent)
+                .frame(width: 40, height: 40)
+            Text(name).lineLimit(1).truncationMode(.middle)
+        }
+    }
+}
+
+private struct FileRow: View {
+    let entry: PCListing.Entry
+    let path: String
+    let hidden: Bool
+
+    private var type: UTType? { UTType(filenameExtension: (entry.name as NSString).pathExtension) }
+    private var hasPreview: Bool { type?.conforms(to: .image) == true || type?.conforms(to: .movie) == true }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if hasPreview {
+                Thumbnail(path: path, modified: entry.modified, hidden: hidden, fallback: icon, isVideo: type?.conforms(to: .movie) == true)
+            } else {
+                Image(systemName: icon).font(.title3).foregroundStyle(.secondary).frame(width: 40, height: 40)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.name).lineLimit(1).truncationMode(.middle)
                 Text("\(ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)) · \(Date(timeIntervalSince1970: TimeInterval(entry.modified)).formatted(date: .abbreviated, time: .shortened))")
@@ -227,7 +314,6 @@ private struct FileRow: View {
     }
 
     private var icon: String {
-        let type = UTType(filenameExtension: (entry.name as NSString).pathExtension)
         if type?.conforms(to: .image) == true { return "photo" }
         if type?.conforms(to: .movie) == true { return "film" }
         if type?.conforms(to: .audio) == true { return "music.note" }
@@ -235,5 +321,38 @@ private struct FileRow: View {
         if type?.conforms(to: .archive) == true { return "doc.zipper" }
         if type?.conforms(to: .text) == true || type?.conforms(to: .sourceCode) == true { return "doc.text" }
         return "doc"
+    }
+}
+
+/// Lazily loaded preview of a PC image or video.
+private struct Thumbnail: View {
+    @Environment(AppModel.self) private var model
+    let path: String
+    let modified: Int64
+    let hidden: Bool
+    let fallback: String
+    let isVideo: Bool
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color.white.opacity(0.06))
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: fallback).foregroundStyle(.secondary)
+            }
+            if isVideo, image != nil {
+                Image(systemName: "play.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.white)
+                    .shadow(radius: 2)
+            }
+        }
+        .frame(width: 40, height: 40)
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .task(id: "\(path)|\(modified)") {
+            image = await model.transfers.thumbnail(path: path, modified: modified, hidden: hidden)
+        }
     }
 }

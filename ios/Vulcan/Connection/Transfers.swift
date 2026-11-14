@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Photos
+import UIKit
 import UniformTypeIdentifiers
 
 /// One upload or download shown in the Files tab.
@@ -17,6 +18,23 @@ struct Transfer: Identifiable, Equatable {
     let incoming: Bool
     var progress: Double = 0
     var state: State = .waiting
+    /// Extra status under the progress bar, e.g. "12 of 40 files".
+    var detail: String?
+}
+
+/// Every file under a PC folder, for downloading it whole.
+struct PCWalk: Decodable {
+    struct File: Decodable {
+        /// Home-relative path on the PC.
+        let path: String
+        /// Folder name plus path inside it.
+        let rel: String
+        let size: Int64
+    }
+
+    let files: [File]
+    let total: Int64
+    let truncated: Bool
 }
 
 /// A folder listing from the PC's home directory.
@@ -55,6 +73,11 @@ final class TransferManager {
     @ObservationIgnored private var pendingUploads: [(URL, String)] = []
     /// Offers being downloaded, so a reconnect's re-sent offer doesn't start a second copy.
     @ObservationIgnored private var activeOffers: Set<String> = []
+    @ObservationIgnored private let thumbnails: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 500
+        return cache
+    }()
 
     init(connection: ConnectionManager) {
         self.connection = connection
@@ -133,6 +156,84 @@ final class TransferManager {
             return
         }
         download(req, name: name, onFinish: nil)
+    }
+
+    /// Preview of a PC image or video, cached in memory by path and modification time.
+    func thumbnail(path: String, modified: Int64, hidden: Bool) async -> UIImage? {
+        let key = "\(path)|\(modified)" as NSString
+        if let cached = thumbnails.object(forKey: key) { return cached }
+        guard let req = request(path: "/fs/thumb", query: [.init(name: "path", value: path), .init(name: "hidden", value: String(hidden))]),
+              let session = urlSession(),
+              case let (data, response)? = try? await session.data(for: req),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let image = UIImage(data: data)
+        else { return nil }
+        // Decode off the main thread before display.
+        let ready = await image.byPreparingForDisplay() ?? image
+        thumbnails.setObject(ready, forKey: key)
+        return ready
+    }
+
+    /// Download a whole PC folder into Files › Vulcan › Received, keeping its structure.
+    func downloadFolder(path: String, name: String, hidden: Bool) {
+        var transfer = Transfer(name: name, incoming: true)
+        transfer.state = .running
+        transfer.detail = "Listing files…"
+        transfers.append(transfer)
+        let id = transfer.id
+        let hiddenValue = String(hidden)
+
+        Task {
+            do {
+                guard let walkReq = request(path: "/fs/walk", query: [.init(name: "path", value: path), .init(name: "hidden", value: hiddenValue)]),
+                      let session = urlSession()
+                else { throw TransferError(message: "Not connected to the PC") }
+                let (data, response) = try await session.data(for: walkReq)
+                try Self.check(response, data)
+                let walk = try JSONDecoder().decode(PCWalk.self, from: data)
+                if walk.files.isEmpty {
+                    update(id) { $0.state = .done("Empty folder"); $0.detail = nil }
+                    return
+                }
+
+                let received = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                    .appendingPathComponent("Received", isDirectory: true)
+                try FileManager.default.createDirectory(at: received, withIntermediateDirectories: true)
+                let root = Self.uniqueURL(in: received, name: name)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+                var doneBytes: Int64 = 0
+                var failed = 0
+                for (i, file) in walk.files.enumerated() {
+                    update(id) { $0.detail = "\(i + 1) of \(walk.files.count) files" }
+                    do {
+                        // Path inside the chosen folder; drop any "." or ".." just in case.
+                        let inner = file.rel.split(separator: "/").dropFirst().filter { $0 != "." && $0 != ".." }
+                        guard !inner.isEmpty,
+                              let fileReq = request(path: "/fs/download", query: [.init(name: "path", value: file.path), .init(name: "hidden", value: hiddenValue)])
+                        else { throw TransferError(message: "Not connected to the PC") }
+                        let dest = inner.reduce(root) { $0.appendingPathComponent(String($1)) }
+                        let (temp, response) = try await session.download(for: fileReq)
+                        try Self.check(response, nil)
+                        try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                        try? FileManager.default.removeItem(at: dest)
+                        try FileManager.default.moveItem(at: temp, to: dest)
+                    } catch {
+                        if !connection.isConnected { throw error }
+                        failed += 1
+                    }
+                    doneBytes += file.size
+                    let fraction = walk.total > 0 ? Double(doneBytes) / Double(walk.total) : Double(i + 1) / Double(walk.files.count)
+                    update(id) { $0.progress = fraction }
+                }
+                var summary = "Saved to Files › Vulcan › Received › \(root.lastPathComponent)"
+                if failed > 0 { summary += " (\(failed) failed)" }
+                if walk.truncated { summary += " (first \(walk.files.count) files only)" }
+                update(id) { $0.state = .done(summary); $0.detail = nil; $0.progress = 1 }
+            } catch {
+                update(id) { $0.state = .failed(error.localizedDescription); $0.detail = nil }
+            }
+        }
     }
 
     // MARK: PC → phone offers
