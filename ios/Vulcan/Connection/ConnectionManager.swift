@@ -24,7 +24,14 @@ final class ConnectionManager {
 
     private(set) var state: State = .idle
     private(set) var paused = false
-    private(set) var toast: String?
+    private(set) var toast: Toast?
+    /// Capabilities and custom command buttons announced by the PC in `welcome`.
+    private(set) var caps: Set<String> = []
+    private(set) var commands: [RemoteCommand] = []
+    private(set) var volume: VolumeState?
+    private(set) var media: MediaState?
+    private(set) var monitors: [MonitorInfo] = []
+    private(set) var usbDevices: [UsbDevice] = []
     var onHostChanged: ((String) -> Void)?
 
     private var pairing: Pairing?
@@ -132,6 +139,8 @@ final class ConnectionManager {
             guard case let .string(text)? = first, let msg = ServerMessage.parse(text) else { return .unreachable }
             if msg.t == "error" { return .rejected(msg.msg ?? "Rejected by the PC") }
             guard msg.t == "welcome" else { return .unreachable }
+            caps = Set(msg.caps ?? [])
+            commands = msg.commands ?? []
         } catch {
             return .unreachable
         }
@@ -160,12 +169,27 @@ final class ConnectionManager {
     /// Returns a message if the PC ended our pairing.
     private func handle(_ msg: ServerMessage) -> String? {
         switch msg.t {
+        case "volume":
+            if let level = msg.level { volume = VolumeState(level: level, muted: msg.muted ?? false) }
+        case "media":
+            media = MediaState(
+                status: msg.status ?? "none",
+                title: msg.title ?? "",
+                artist: msg.artist ?? "",
+                player: msg.player ?? ""
+            )
+        case "usb_devices":
+            usbDevices = msg.devices ?? []
+        case "displays":
+            monitors = msg.monitors ?? []
+        case "info":
+            if let text = msg.msg { show(toast: text, isError: false) }
         case "paused":
             paused = msg.paused ?? false
         case "error":
             let text = msg.msg ?? "Unknown error"
             if text == "pairing revoked" || text == "not paired" { return text }
-            show(toast: text)
+            show(toast: text, isError: true)
         default:
             break
         }
@@ -236,7 +260,8 @@ final class ConnectionManager {
 
     /// Send immediately. Pending motion is flushed first so clicks land where the pointer is.
     func send(_ message: ClientMessage) {
-        guard isConnected, !paused else { return }
+        guard isConnected else { return }
+        if paused, !message.allowedWhilePaused { return }
         flush()
         sendRaw(message)
     }
@@ -263,8 +288,8 @@ final class ConnectionManager {
         socket?.send(.string(message.json)) { _ in }
     }
 
-    private func show(toast text: String) {
-        toast = text
+    private func show(toast text: String, isError: Bool) {
+        toast = Toast(text: text, isError: isError)
         toastTask?.cancel()
         toastTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(3))
@@ -285,4 +310,25 @@ final class OnceFlag: @unchecked Sendable {
         done = true
         return true
     }
+}
+
+struct Toast: Equatable {
+    let text: String
+    let isError: Bool
+}
+
+struct VolumeState: Equatable {
+    let level: Double
+    let muted: Bool
+}
+
+struct MediaState: Equatable {
+    /// Playing / Paused / Stopped, or "none" when no player is running.
+    let status: String
+    let title: String
+    let artist: String
+    let player: String
+
+    var hasPlayer: Bool { status != "none" }
+    var isPlaying: Bool { status == "Playing" }
 }

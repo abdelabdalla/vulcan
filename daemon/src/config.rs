@@ -38,6 +38,56 @@ pub struct Config {
     pub bind: String,
     pub keyboard: KeyboardConfig,
     pub pointer: PointerConfig,
+    pub power: PowerConfig,
+    pub commands: Vec<CommandConfig>,
+    /// Friendly monitor names for the phone, keyed by connector: `DP-2 = "Left"`.
+    pub displays: std::collections::HashMap<String, String>,
+    /// USB devices the phone can disconnect and reconnect.
+    pub usb: Vec<UsbConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsbConfig {
+    pub name: String,
+    /// "vendor:product" as shown by `lsusb`, e.g. "2516:0011".
+    pub id: String,
+    /// SF Symbol name shown on the phone.
+    #[serde(default = "default_usb_icon")]
+    pub icon: String,
+}
+
+fn default_usb_icon() -> String {
+    "cable.connector".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PowerConfig {
+    /// Allow lock / suspend / reboot / power off from the phone.
+    pub enabled: bool,
+    /// Shell command that locks the screen.
+    pub lock: String,
+}
+
+impl Default for PowerConfig {
+    fn default() -> Self {
+        // hypridle runs its lock_cmd, so the lock screen isn't tied to vulcand's lifetime.
+        Self { enabled: true, lock: "loginctl lock-session".into() }
+    }
+}
+
+/// A button on the phone's Controls tab that runs a shell command.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandConfig {
+    pub name: String,
+    pub run: String,
+    /// SF Symbol name shown on the phone.
+    #[serde(default = "default_icon")]
+    pub icon: String,
+}
+
+fn default_icon() -> String {
+    "terminal".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +117,10 @@ impl Default for Config {
             bind: "0.0.0.0".into(),
             keyboard: KeyboardConfig::default(),
             pointer: PointerConfig::default(),
+            power: PowerConfig::default(),
+            commands: Vec::new(),
+            displays: Default::default(),
+            usb: Vec::new(),
         }
     }
 }
@@ -99,6 +153,33 @@ options = ""
 sensitivity = 1.5    # phone points -> pixels
 acceleration = 0.4   # extra gain on fast swipes, 0 = linear
 scroll_speed = 4.0   # wheel units per point (120 = one notch)
+
+[power]
+enabled = true                           # lock / suspend / reboot / power off from the phone
+lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts hyprlock)
+
+# Friendly monitor names on the phone, keyed by connector (see `hyprctl monitors`).
+[displays]
+# DP-2 = "Left"
+# DP-1 = "Right"
+
+# USB devices the phone can switch off and on (disconnects them, which cuts their
+# lights). `id` is vendor:product from `lsusb`. Needs a one-time udev rule:
+#   vulcand udev-rule | sudo tee /etc/udev/rules.d/70-vulcan-usb.rules
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb --action=add
+#
+# [[usb]]
+# name = "Keyboard light"
+# id = "2516:0011"
+# icon = "keyboard"
+
+# Buttons on the phone's Controls tab. `icon` is an SF Symbol name.
+# Launch apps through Hyprland so they don't belong to vulcand.
+#
+# [[commands]]
+# name = "VS Code"
+# icon = "chevron.left.forwardslash.chevron.right"
+# run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 "#;
 
 impl Config {

@@ -4,54 +4,33 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
     @State private var keyboardUp = false
     @State private var showSettings = false
+    @State private var tab = Mode.trackpad
+
+    enum Mode {
+        case trackpad, controls
+    }
 
     private var conn: ConnectionManager { model.connection }
 
     var body: some View {
         VStack(spacing: 0) {
-            StatusBar(showSettings: $showSettings)
+            StatusBar(showSettings: $showSettings, tab: $tab)
 
-            ZStack {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(Theme.surface)
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(.white.opacity(0.08))
-                TrackpadView(actions: TrackpadActions(
-                    move: { conn.queueMove(dx: $0, dy: $1) },
-                    scroll: { conn.queueScroll(dx: $0, dy: $1) },
-                    button: { conn.send(.button($0, $1)) }
-                ))
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-
-                if !conn.isConnected || conn.paused {
-                    OverlayMessage()
-                        .allowsHitTesting(false)
-                }
-                // Invisible owner of the iOS keyboard.
-                KeyboardHost(isActive: $keyboardUp, model: model)
-                    .frame(width: 1, height: 1)
-                    .opacity(0)
-                    .allowsHitTesting(false)
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-
-            ButtonRow(keyboardUp: $keyboardUp)
-                .padding(12)
-
-            // Part of the layout rather than the keyboard's inputAccessoryView: on iOS 26 SwiftUI
-            // counted the accessory's height twice and left a gap above the keyboard.
-            if keyboardUp {
-                KeysBar(onHide: { keyboardUp = false })
+            if tab == .controls {
+                ControlsView()
+            } else {
+                trackpad
             }
         }
+        .onChange(of: tab) { _, _ in keyboardUp = false }
         .overlay(alignment: .top) {
             if let toast = conn.toast {
-                Text(toast)
+                Text(toast.text)
                     .font(.footnote)
+                    .foregroundStyle(toast.isError ? Color.white : Color.black)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(.red.opacity(0.85), in: Capsule())
+                    .background(toast.isError ? Color.red.opacity(0.85) : Theme.accent, in: Capsule())
                     .padding(.top, 52)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -59,11 +38,49 @@ struct MainView: View {
         .animation(.default, value: conn.toast)
         .sheet(isPresented: $showSettings) { SettingsView() }
     }
+
+    @ViewBuilder
+    private var trackpad: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Theme.surface)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.08))
+            TrackpadView(actions: TrackpadActions(
+                move: { conn.queueMove(dx: $0, dy: $1) },
+                scroll: { conn.queueScroll(dx: $0, dy: $1) },
+                button: { conn.send(.button($0, $1)) }
+            ))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+
+            if !conn.isConnected || conn.paused {
+                OverlayMessage()
+                    .allowsHitTesting(false)
+            }
+            // Invisible owner of the iOS keyboard.
+            KeyboardHost(isActive: $keyboardUp, model: model)
+                .frame(width: 1, height: 1)
+                .opacity(0)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+
+        ButtonRow(keyboardUp: $keyboardUp)
+            .padding(12)
+
+        // Part of the layout rather than the keyboard's inputAccessoryView: on iOS 26 SwiftUI
+        // counted the accessory's height twice and left a gap above the keyboard.
+        if keyboardUp {
+            KeysBar(onHide: { keyboardUp = false })
+        }
+    }
 }
 
 private struct StatusBar: View {
     @Environment(AppModel.self) private var model
     @Binding var showSettings: Bool
+    @Binding var tab: MainView.Mode
 
     var body: some View {
         let (color, text) = describe(model.connection.state, paused: model.connection.paused)
@@ -71,6 +88,12 @@ private struct StatusBar: View {
             Circle().fill(color).frame(width: 10, height: 10)
             Text(text).font(.subheadline).lineLimit(1)
             Spacer()
+            Picker("Mode", selection: $tab) {
+                Image(systemName: "hand.point.up.left").tag(MainView.Mode.trackpad)
+                Image(systemName: "slider.horizontal.3").tag(MainView.Mode.controls)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 110)
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill").font(.title3)
             }
