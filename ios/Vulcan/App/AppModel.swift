@@ -21,6 +21,7 @@ final class AppModel {
         self.connection = connection
         clipboard = ClipboardSync(connection: connection)
         transfers = TransferManager(connection: connection)
+        PairingStore.shareWithExtension()
         pairing = PairingStore.load()
         connection.onHostChanged = { [weak self] host in self?.updateHost(host) }
         connection.onClip = { [weak self] msg in self?.clipboard.receive(msg) }
