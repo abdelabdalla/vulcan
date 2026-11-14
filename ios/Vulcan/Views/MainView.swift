@@ -4,6 +4,9 @@ struct MainView: View {
     @Environment(AppModel.self) private var model
     @State private var keyboardUp = false
     @State private var showSettings = false
+    @AppStorage(Settings.volumeButtons) private var volumeButtons = true
+    @State private var showVolumeHUD = false
+    @State private var hideVolumeHUD: Task<Void, Never>?
     @State private var tab = Mode.trackpad
 
     enum Mode {
@@ -23,6 +26,15 @@ struct MainView: View {
             }
         }
         .onChange(of: tab) { _, _ in keyboardUp = false }
+        // PC volume after a volume-button press; the PC replies with the new level.
+        .overlay(alignment: .center) {
+            if showVolumeHUD {
+                VolumeHUD(volume: conn.volume)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
+                    .allowsHitTesting(false)
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: showVolumeHUD)
         .overlay(alignment: .top) {
             if let toast = conn.toast {
                 Text(toast.text)
@@ -37,6 +49,25 @@ struct MainView: View {
         }
         .animation(.default, value: conn.toast)
         .sheet(isPresented: $showSettings) { SettingsView() }
+        // Hidden; turns the phone's volume buttons into PC volume ±5% while connected.
+        .background(
+            VolumeButtons(active: volumeButtons && conn.isConnected && !conn.paused) { up in
+                conn.send(.volume(up ? .up : .down))
+                flashVolumeHUD()
+            }
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+        )
+    }
+
+    private func flashVolumeHUD() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        showVolumeHUD = true
+        hideVolumeHUD?.cancel()
+        hideVolumeHUD = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            if !Task.isCancelled { showVolumeHUD = false }
+        }
     }
 
     @ViewBuilder
@@ -183,5 +214,30 @@ private struct MouseButtonView: View {
                         model.connection.send(.button(button, .up))
                     }
             )
+    }
+}
+
+/// Volume indicator shown after the phone's volume buttons change the PC volume.
+private struct VolumeHUD: View {
+    let volume: VolumeState?
+
+    var body: some View {
+        let level = volume?.level ?? 0
+        let muted = volume?.muted ?? false
+        VStack(spacing: 12) {
+            Image(systemName: muted ? "speaker.slash.fill" : level < 0.34 ? "speaker.wave.1.fill" : level < 0.67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill")
+                .font(.system(size: 34))
+                .contentTransition(.symbolEffect(.replace))
+            Text("PC volume").font(.caption).foregroundStyle(.secondary)
+            ProgressView(value: min(level, 1))
+                .tint(muted ? .secondary : Theme.accent)
+                .frame(width: 140)
+                .animation(.easeOut(duration: 0.15), value: level)
+            Text(volume.map { muted ? "Muted" : "\(Int(($0.level * 100).rounded()))%" } ?? "…")
+                .font(.headline.monospacedDigit())
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 20)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }

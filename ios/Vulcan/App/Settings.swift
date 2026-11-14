@@ -6,6 +6,7 @@ enum Settings {
     static let scrollSpeed = "scrollSpeed"
     static let naturalScroll = "naturalScroll"
     static let tapToClick = "tapToClick"
+    static let volumeButtons = "volumeButtons"
     static let combos = "combos"
     static let manualHost = "manualHost"
 
@@ -17,6 +18,7 @@ enum Settings {
             scrollSpeed: 1.0,
             naturalScroll: true,
             tapToClick: true,
+            volumeButtons: true,
             combos: defaultCombos,
             manualHost: "",
         ])

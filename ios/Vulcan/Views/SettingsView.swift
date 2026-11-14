@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(Settings.scrollSpeed) private var scrollSpeed = 1.0
     @AppStorage(Settings.naturalScroll) private var naturalScroll = true
     @AppStorage(Settings.tapToClick) private var tapToClick = true
+    @AppStorage(Settings.volumeButtons) private var volumeButtons = true
     @AppStorage(Settings.combos) private var combos = Settings.defaultCombos
     @AppStorage(Settings.manualHost) private var manualHost = ""
     @State private var confirmUnpair = false
@@ -24,6 +25,12 @@ struct SettingsView: View {
                     }
                     Toggle("Natural scrolling", isOn: $naturalScroll)
                     Toggle("Tap to click", isOn: $tapToClick)
+                }
+
+                Section {
+                    Toggle("Volume buttons control the PC", isOn: $volumeButtons)
+                } footer: {
+                    Text("While Vulcan is open and nothing is playing on the phone, its volume buttons change the PC's volume by 5%. When the phone plays audio, the buttons control the phone as usual.")
                 }
 
                 Section {
