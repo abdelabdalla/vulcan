@@ -60,6 +60,9 @@ The config lives at `~/.config/vulcan/config.toml` and is created on first run:
 | `pointer.sensitivity` | 1.5 | Pointer speed |
 | `pointer.acceleration` | 0.4 | Extra speed for fast swipes |
 | `pointer.scroll_speed` | 4.0 | Scroll speed |
+| `pointer.cursor_boost_size` | 64 | Cursor size while the phone moves the pointer, so it's easy to find from across the room. `0` turns this off. |
+| `pointer.cursor_boost_ms` | 2000 | How long the cursor stays big after the last movement |
+| `pointer.cursor_size` | 24 | The normal cursor size to return to |
 | `power.enabled` | `true` | Allow lock, sleep, restart and shut down from the phone |
 | `power.lock` | `loginctl lock-session` | The command that locks the screen. The default needs hypridle running, because hypridle's `lock_cmd` is what starts hyprlock. |
 | `[displays]` | none | Friendly monitor names for the phone, keyed by connector name, e.g. `DP-2 = "Left"` |

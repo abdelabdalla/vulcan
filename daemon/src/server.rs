@@ -42,6 +42,7 @@ pub struct AppState {
     pub clip_memory: Mutex<ClipMemory>,
     /// Files queued for the phone.
     pub offers: Offers,
+    pub cursor: Option<crate::cursor::CursorBoost>,
 }
 
 impl AppState {
@@ -346,7 +347,12 @@ async fn refresh(st: &AppState) -> Vec<ServerMsg> {
 fn handle_input(st: &AppState, msg: ClientMsg) -> anyhow::Result<Option<ServerMsg>> {
     let mut input = st.input.lock().unwrap();
     match msg {
-        ClientMsg::Move { dx, dy } => input.move_by(dx, dy)?,
+        ClientMsg::Move { dx, dy } => {
+            input.move_by(dx, dy)?;
+            if let Some(c) = &st.cursor {
+                c.poke();
+            }
+        }
         ClientMsg::Scroll { dx, dy } => input.scroll(dx, dy)?,
         ClientMsg::Button { b, s } => input.button(b, s)?,
         ClientMsg::Key { k, mods, s } => input.key(&k, &mods, s)?,

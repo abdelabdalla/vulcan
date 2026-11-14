@@ -3,6 +3,7 @@ mod auth;
 mod clipboard;
 mod config;
 mod control;
+mod cursor;
 mod files;
 mod input;
 mod mdns;
@@ -138,6 +139,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         clip_tx,
         clip_memory: Default::default(),
         offers: Default::default(),
+        cursor: cursor::CursorBoost::spawn(&cfg.pointer),
         cfg,
     });
 
