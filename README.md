@@ -75,6 +75,24 @@ icon = "chevron.left.forwardslash.chevron.right"
 run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 ```
 
+### Clipboard sync
+
+Text and images sync between the PC and the phone while the Vulcan app is open. There are two automatic directions, toggled from the phone's Controls tab or the tray menu:
+
+| Setting | What it does |
+|---|---|
+| PC → phone | Each new PC copy goes to the phone's clipboard. Via Universal Clipboard, it can then be pasted on a Mac too. |
+| Phone → PC | A phone copy goes to the PC when the app opens, or as soon as the phone's clipboard changes. iOS asks "Allow Paste" each time unless you set **Settings → Vulcan → Paste from Other Apps → Allow**. |
+
+Both are on by default. The setting is stored in `~/.config/vulcan/state.toml`.
+
+Two manual actions always work, whatever the toggles say:
+
+- **Paste** is the system paste button, so it doesn't trigger a prompt.
+- **Get from PC** fetches the PC's current clipboard.
+
+Content is identified by hash, so a copy never bounces back to where it came from. The PC side uses `wl-paste --watch` and `wl-copy`. Images over 20 MB don't sync.
+
 ### Switching USB devices off
 
 Some devices' lights have no software control: the Cooler Master Quickfire TK keyboard, for example. Vulcan can disconnect such a device instead. Disconnecting deauthorizes the device and lets the kernel suspend it, which cuts it to standby power so its lights go off. Reconnecting brings it back.
@@ -99,7 +117,7 @@ The phone and PC exchange JSON text frames over `wss://<pc>:47800/ws`. The first
 
 | Direction | Messages |
 |---|---|
-| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `usb{name,on?}`, `cmd{id}`, `refresh`, `ping` |
-| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `usb_devices{devices}`, `paused{paused}`, `pong` |
+| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `usb{name,on?}`, `clip_set{kind,text?,mime?,data?,auto}`, `clip_get`, `clip_settings{to_phone?,to_pc?}`, `cmd{id}`, `refresh`, `ping` |
+| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `usb_devices{devices}`, `clip{kind,text?,mime?,data?,hash}`, `clip_settings{to_phone,to_pc}`, `paused{paused}`, `pong` |
 
 See [`daemon/src/protocol.rs`](daemon/src/protocol.rs) for the full definitions.

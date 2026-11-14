@@ -90,6 +90,13 @@ pub struct UsbInfo {
     pub present: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipKind {
+    Text,
+    Image,
+}
+
 /// A custom command from the config, as shown on the phone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandInfo {
@@ -138,6 +145,28 @@ pub enum ClientMsg {
         #[serde(default)]
         on: Option<bool>,
     },
+    /// Put the phone's clipboard on the PC. Images are base64 in `data`.
+    /// `auto` marks automatic sync, which the PC ignores when phone→PC auto is off.
+    ClipSet {
+        kind: ClipKind,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        mime: Option<String>,
+        #[serde(default)]
+        data: Option<String>,
+        #[serde(default)]
+        auto: bool,
+    },
+    /// Ask for the PC's current clipboard.
+    ClipGet,
+    /// Change the auto-sync settings (shared with the tray).
+    ClipSettings {
+        #[serde(default)]
+        to_phone: Option<bool>,
+        #[serde(default)]
+        to_pc: Option<bool>,
+    },
     /// Run a custom command from the config by id.
     Cmd { id: String },
     /// Ask for current volume and now-playing info.
@@ -165,6 +194,18 @@ pub enum ServerMsg {
     Media { status: String, title: String, artist: String, player: String },
     Displays { monitors: Vec<MonitorInfo> },
     UsbDevices { devices: Vec<UsbInfo> },
+    /// PC clipboard content. `hash` lets the phone skip content it already has.
+    Clip {
+        kind: ClipKind,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mime: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        data: Option<String>,
+        hash: String,
+    },
+    ClipSettings { to_phone: bool, to_pc: bool },
     Paused { paused: bool },
     Pong,
 }
@@ -195,6 +236,10 @@ mod tests {
         assert_eq!(m, ClientMsg::Display { a: DisplayAction::Off, monitor: Some("DP-2".into()) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"usb","name":"Keyboard light"}"#).unwrap();
         assert_eq!(m, ClientMsg::Usb { name: "Keyboard light".into(), on: None });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"clip_set","kind":"text","text":"hi","auto":true}"#).unwrap();
+        assert_eq!(m, ClientMsg::ClipSet { kind: ClipKind::Text, text: Some("hi".into()), mime: None, data: None, auto: true });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"clip_settings","to_pc":false}"#).unwrap();
+        assert_eq!(m, ClientMsg::ClipSettings { to_phone: None, to_pc: Some(false) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
     }

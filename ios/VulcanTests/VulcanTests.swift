@@ -63,6 +63,15 @@ final class VulcanTests: XCTestCase {
         XCTAssertEqual(try object(.cmd("Workspace 2"))["id"] as? String, "Workspace 2")
         XCTAssertEqual(try object(.usb("Keyboard light"))["name"] as? String, "Keyboard light")
         XCTAssertNil(try object(.usb("Keyboard light"))["on"], "toggle when no state given")
+        let clip = try object(.clipSet(.image(Data([1, 2]), mime: "image/png"), auto: true))
+        XCTAssertEqual(clip["t"] as? String, "clip_set")
+        XCTAssertEqual(clip["kind"] as? String, "image")
+        XCTAssertEqual(clip["data"] as? String, "AQI=")
+        XCTAssertEqual(clip["auto"] as? Bool, true)
+        let settings = try object(.clipSettings(toPhone: nil, toPC: false))
+        XCTAssertEqual(settings["to_pc"] as? Bool, false)
+        XCTAssertNil(settings["to_phone"])
+        XCTAssertTrue(ClientMessage.clipSettings(toPhone: true, toPC: nil).allowedWhilePaused)
         XCTAssertTrue(ClientMessage.refresh.allowedWhilePaused)
         XCTAssertFalse(ClientMessage.media(.next).allowedWhilePaused)
     }
@@ -85,6 +94,12 @@ final class VulcanTests: XCTestCase {
             #"{"t":"usb_devices","devices":[{"name":"Keyboard light","icon":"keyboard","on":false,"present":true}]}"#
         ))
         XCTAssertEqual(usb.devices?.first?.on, false)
+        let clip = try XCTUnwrap(ServerMessage.parse(#"{"t":"clip","kind":"text","text":"hi","hash":"ab"}"#))
+        XCTAssertEqual(clip.text, "hi")
+        XCTAssertEqual(clip.hash, "ab")
+        let settings = try XCTUnwrap(ServerMessage.parse(#"{"t":"clip_settings","to_phone":false,"to_pc":true}"#))
+        XCTAssertEqual(settings.toPhone, false)
+        XCTAssertEqual(settings.toPc, true)
         let media = try XCTUnwrap(ServerMessage.parse(#"{"t":"media","status":"Playing","title":"S","artist":"A","player":"spotify"}"#))
         XCTAssertEqual(media.status, "Playing")
     }

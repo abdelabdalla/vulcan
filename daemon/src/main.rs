@@ -1,5 +1,6 @@
 mod actions;
 mod auth;
+mod clipboard;
 mod config;
 mod input;
 mod mdns;
@@ -19,7 +20,7 @@ use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::auth::DeviceStore;
-use crate::config::{Config, Paths};
+use crate::config::{Config, Paths, RuntimeState};
 use crate::input::{Input, text::TextMapper};
 use crate::server::{AppState, Status};
 
@@ -107,19 +108,24 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
     let text = TextMapper::new(&layout, &variant, &options)?;
     let input = Input::new(cfg.pointer.clone(), text)?;
 
-    let (status, _) = watch::channel(Status::default());
+    let runtime = RuntimeState::load(&paths);
+    let (status, _) = watch::channel(Status { runtime, ..Default::default() });
+    let (clip_tx, _) = tokio::sync::broadcast::channel(8);
     let st = Arc::new(AppState {
         paths,
         fingerprint: tls.fingerprint.clone(),
         host: host.clone(),
         input: Mutex::new(input),
         status,
+        clip_tx,
+        clip_memory: Default::default(),
         cfg,
     });
 
     let _mdns = mdns::advertise(&host, st.cfg.port, &tls.fingerprint)
         .inspect_err(|e| warn!("mDNS advertisement failed: {e:#}"))
         .ok();
+    clipboard::spawn_watcher(st.clone());
     if !no_tray {
         tray::spawn(st.clone());
     }

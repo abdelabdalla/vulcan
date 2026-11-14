@@ -10,13 +10,20 @@ enum ModState {
 @MainActor
 final class AppModel {
     private(set) var pairing: Pairing?
-    let connection = ConnectionManager()
+    let connection: ConnectionManager
+    let clipboard: ClipboardSync
     private(set) var mods: [String: ModState] = [:]
     var pairingError: String?
 
     init() {
+        let connection = ConnectionManager()
+        self.connection = connection
+        clipboard = ClipboardSync(connection: connection)
         pairing = PairingStore.load()
         connection.onHostChanged = { [weak self] host in self?.updateHost(host) }
+        connection.onClip = { [weak self] msg in self?.clipboard.receive(msg) }
+        // Settings arrive on every connect, so this also catches copies made while away.
+        connection.onClipSettings = { [weak self] in self?.clipboard.autoSendIfChanged() }
     }
 
     // MARK: Pairing
