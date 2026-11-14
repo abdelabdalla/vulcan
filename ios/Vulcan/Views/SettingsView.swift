@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage(Settings.volumeButtons) private var volumeButtons = true
     @AppStorage(Settings.combos) private var combos = Settings.defaultCombos
     @AppStorage(Settings.manualHost) private var manualHost = ""
+    @AppStorage(Settings.bluetoothFallback) private var bluetoothFallback = true
     @State private var confirmUnpair = false
 
     var body: some View {
@@ -58,6 +59,7 @@ struct SettingsView: View {
                             .keyboardType(.numbersAndPunctuation)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                        Toggle("Bluetooth when Wi-Fi isn't available", isOn: $bluetoothFallback)
                         Button("Reconnect") { model.connection.reconnect() }
                     } header: {
                         Text("Connection")

@@ -18,6 +18,8 @@ use crate::server::AppState;
 /// Larger clipboard images are skipped (they'd be slow to push over Wi-Fi on every copy).
 pub const MAX_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 1024 * 1024;
+/// Bluetooth is slow; only small clipboard text goes over it (no images).
+pub const MAX_BLUETOOTH_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Clip {
@@ -40,6 +42,15 @@ impl Clip {
             }
         }
         hex::encode(&h.finalize()[..16])
+    }
+
+    /// Whether this can go over the given transport.
+    pub fn fits(&self, transport: crate::server::Transport) -> bool {
+        match (transport, self) {
+            (crate::server::Transport::WiFi, _) => true,
+            (_, Clip::Text(t)) => t.len() <= MAX_BLUETOOTH_BYTES,
+            (_, Clip::Image { .. }) => false,
+        }
     }
 
     pub fn to_msg(&self) -> ServerMsg {

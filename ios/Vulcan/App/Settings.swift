@@ -8,6 +8,7 @@ enum Settings {
     static let tapToClick = "tapToClick"
     static let volumeButtons = "volumeButtons"
     static let scrollWheels = "scrollWheels"
+    static let bluetoothFallback = "bluetoothFallback"
     static let combos = "combos"
     static let manualHost = "manualHost"
 
@@ -21,6 +22,7 @@ enum Settings {
             tapToClick: true,
             volumeButtons: true,
             scrollWheels: true,
+            bluetoothFallback: true,
             combos: defaultCombos,
             manualHost: "",
         ])

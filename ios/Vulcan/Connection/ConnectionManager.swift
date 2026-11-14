@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 
 /// Keeps one WebSocket open to the paired PC: tries the last known address, falls back to Bonjour,
@@ -45,6 +46,13 @@ final class ConnectionManager {
     var onConnected: (() -> Void)?
     var onFileOffer: ((_ id: String, _ name: String) -> Void)?
     private var loop: Task<Void, Never>?
+    enum Transport {
+        case wifi, bluetooth
+    }
+
+    /// How the current connection reaches the PC. Files and the PC browser need Wi-Fi.
+    private(set) var transport: Transport = .wifi
+    private var bluetooth: BluetoothLink?
     private var socket: URLSessionWebSocketTask?
     private var session: URLSession?
     private var ticker: FrameTicker?
@@ -116,9 +124,92 @@ final class ConnectionManager {
         // The PC may have a new IP: look it up by fingerprint over Bonjour.
         state = .searching
         if let found = await Discovery.find(fingerprint: p.fingerprint), !hosts.contains(found), !Task.isCancelled {
-            return await attempt(p, host: found)
+            let outcome = await attempt(p, host: found)
+            if outcome != .unreachable { return outcome }
+        }
+        // No Wi-Fi route to the PC: fall back to Bluetooth.
+        if Settings.d.bool(forKey: Settings.bluetoothFallback), !Task.isCancelled {
+            return await attemptBluetooth(p, wifiHosts: hosts)
         }
         return .unreachable
+    }
+
+    private func attemptBluetooth(_ p: Pairing, wifiHosts: [String]) async -> Outcome {
+        state = .connecting("Bluetooth")
+        let link = BluetoothLink()
+        bluetooth = link
+        defer {
+            if bluetooth === link { teardown() }
+        }
+        guard await link.connect(), !Task.isCancelled else { return .unreachable }
+
+        let (messages, input) = AsyncStream<String>.makeStream()
+        link.onMessage = { input.yield($0) }
+        link.onClose = { input.finish() }
+        link.send(ClientMessage.hello(token: p.token, device: p.deviceName).json)
+
+        var iterator = messages.makeAsyncIterator()
+        // No welcome within 5 s: closing the link ends the stream.
+        let timeout = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            if !Task.isCancelled { link.close() }
+        }
+        let first = await iterator.next()
+        timeout.cancel()
+        guard let first, let msg = ServerMessage.parse(first) else { return .unreachable }
+        if msg.t == "error" { return .rejected(msg.msg ?? "Rejected by the PC") }
+        guard msg.t == "welcome", !Task.isCancelled else { return .unreachable }
+        caps = Set(msg.caps ?? [])
+        commands = msg.commands ?? []
+
+        transport = .bluetooth
+        state = .connected(p.hostname)
+        activeHost = nil
+        paused = false
+        onConnected?()
+        startTicker()
+
+        // Go back to Wi-Fi as soon as the PC is reachable again.
+        let probe = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(20))
+                for host in wifiHosts where await Self.reachable(host: host, port: p.port) {
+                    self?.bluetooth?.close()
+                    return
+                }
+            }
+        }
+        defer { probe.cancel() }
+
+        while let text = await iterator.next() {
+            if let msg = ServerMessage.parse(text), let fatal = handle(msg) {
+                return .rejected(fatal)
+            }
+        }
+        return .wasConnected
+    }
+
+    /// Quick TCP check that the PC's port answers over Wi-Fi.
+    private nonisolated static func reachable(host: String, port: Int) async -> Bool {
+        guard let nwPort = NWEndpoint.Port(rawValue: UInt16(port)) else { return false }
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: .tcp)
+        return await withCheckedContinuation { continuation in
+            let once = OnceFlag()
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if once.claim() { connection.cancel(); continuation.resume(returning: true) }
+                case .failed, .cancelled:
+                    if once.claim() { connection.cancel(); continuation.resume(returning: false) }
+                default:
+                    break
+                }
+            }
+            connection.start(queue: .global())
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                if once.claim() { connection.cancel(); continuation.resume(returning: false) }
+            }
+        }
     }
 
     private func attempt(_ p: Pairing, host: String) async -> Outcome {
@@ -155,6 +246,7 @@ final class ConnectionManager {
         }
         if Task.isCancelled { return .unreachable }
 
+        transport = .wifi
         state = .connected(p.hostname)
         activeHost = host
         onConnected?()
@@ -257,6 +349,13 @@ final class ConnectionManager {
     private func teardown() {
         ticker?.invalidate()
         ticker = nil
+        if let bluetooth {
+            bluetooth.onClose = nil
+            bluetooth.onMessage = nil
+            bluetooth.close()
+        }
+        bluetooth = nil
+        transport = .wifi
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         session?.invalidateAndCancel()
@@ -304,7 +403,11 @@ final class ConnectionManager {
     }
 
     private func sendRaw(_ message: ClientMessage) {
-        socket?.send(.string(message.json)) { _ in }
+        if let bluetooth {
+            bluetooth.send(message.json)
+        } else {
+            socket?.send(.string(message.json)) { _ in }
+        }
     }
 
     /// Change clipboard auto-sync; updated locally at once, confirmed by the PC.

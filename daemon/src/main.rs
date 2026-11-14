@@ -1,5 +1,6 @@
 mod actions;
 mod ancs;
+mod bluetooth;
 mod auth;
 mod clipboard;
 mod config;
@@ -149,6 +150,9 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         .inspect_err(|e| warn!("mDNS advertisement failed: {e:#}"))
         .ok();
     clipboard::spawn_watcher(st.clone());
+    if st.cfg.bluetooth.remote {
+        bluetooth::spawn(st.clone());
+    }
     if let Err(e) = control::spawn_listener(st.clone()) {
         warn!("control socket unavailable, `vulcand send` won't work: {e:#}");
     }

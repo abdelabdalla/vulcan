@@ -49,6 +49,20 @@ pub struct Config {
     /// USB devices the phone can disconnect and reconnect.
     pub usb: Vec<UsbConfig>,
     pub notifications: NotificationsConfig,
+    pub bluetooth: BluetoothConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BluetoothConfig {
+    /// Let the phone control the PC over Bluetooth when Wi-Fi isn't available.
+    pub remote: bool,
+}
+
+impl Default for BluetoothConfig {
+    fn default() -> Self {
+        Self { remote: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,6 +162,7 @@ impl Default for Config {
             displays: Default::default(),
             usb: Vec::new(),
             notifications: NotificationsConfig::default(),
+            bluetooth: BluetoothConfig::default(),
         }
     }
 }
@@ -198,6 +213,9 @@ lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts h
 
 [notifications]
 enabled = true   # iPhone notifications on the desktop over Bluetooth; pair from the tray
+
+[bluetooth]
+remote = true    # control the PC over Bluetooth when Wi-Fi isn't available (uses the same pairing)
 
 # Friendly monitor names on the phone, keyed by connector (see `hyprctl monitors`).
 [displays]

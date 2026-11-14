@@ -38,6 +38,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: Scan the pairing QR code shown on your PC.
         NSPhotoLibraryAddUsageDescription: Save photos and videos sent from your PC.
+        NSBluetoothAlwaysUsageDescription: Vulcan uses Bluetooth to reach your PC when Wi-Fi isn't available.
         # Received files show up in the Files app under On My iPhone › Vulcan.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

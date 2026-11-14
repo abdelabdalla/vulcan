@@ -133,6 +133,21 @@ After that, the phone reconnects by itself. Notifications that were already on t
 
 To turn this off, set `[notifications] enabled = false` in the config.
 
+### Bluetooth fallback
+
+When the phone can't reach the PC over Wi-Fi, the app connects over Bluetooth LE instead. It uses the bond made when pairing for notifications, so pair the iPhone from the tray first.
+
+| Over Bluetooth | |
+|---|---|
+| Works | Trackpad, keyboard, all controls (media, volume, screens, USB devices, power, commands), and text clipboard up to 64 KB |
+| Needs Wi-Fi | Files, browsing the PC, and clipboard images |
+
+How the link works:
+
+- **Protocol:** the same JSON messages as Wi-Fi, split into small packets and reassembled at the other end. Sessions still check the pairing token.
+- **Switching back:** while on Bluetooth, the app checks for Wi-Fi every 20 seconds and switches back as soon as it can.
+- **Turning it off:** on the PC, set `[bluetooth] remote = false` in the config. On the phone, use the Settings toggle.
+
 ### Switching USB devices off
 
 Some devices' lights have no software control: the Cooler Master Quickfire TK keyboard, for example. Vulcan can disconnect such a device instead. Disconnecting deauthorizes the device and lets the kernel suspend it, which cuts it to standby power so its lights go off. Reconnecting brings it back.
