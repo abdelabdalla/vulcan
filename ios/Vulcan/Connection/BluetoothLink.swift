@@ -28,7 +28,16 @@ final class BluetoothLink: NSObject {
         let central = CBCentralManager(delegate: self, queue: .main, options: [CBCentralManagerOptionShowPowerAlertKey: false])
         self.central = central
         if central.state != .poweredOn {
-            let on = await withCheckedContinuation { poweredOn = $0 }
+            let on = await withCheckedContinuation { continuation in
+                poweredOn = continuation
+                // Don't wait forever if Bluetooth never reports powered on.
+                DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.poweredOn?.resume(returning: false)
+                        self?.poweredOn = nil
+                    }
+                }
+            }
             guard on else { return false }
         }
         return await withCheckedContinuation { continuation in
