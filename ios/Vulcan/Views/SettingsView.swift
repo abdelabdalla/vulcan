@@ -30,7 +30,7 @@ struct SettingsView: View {
                 Section {
                     Toggle("Volume buttons control the PC", isOn: $volumeButtons)
                 } footer: {
-                    Text("While Vulcan is open, the phone's volume buttons change the PC's volume by 5%. The phone's own volume is put back when you leave the app.")
+                    Text("While Vulcan is open and nothing is playing on the phone, its volume buttons change the PC's volume by 5%. When the phone plays audio, the buttons control the phone as usual.")
                 }
 
                 Section {

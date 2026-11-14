@@ -7,7 +7,8 @@ import SwiftUI
 /// iOS has no API for the buttons themselves, so this watches the phone's output volume,
 /// reports each change as a press, and puts the volume back to a midpoint (so both buttons
 /// keep registering) using a hidden MPVolumeView, which also stops iOS showing its volume HUD.
-/// The phone's own volume is restored when this stops.
+/// The phone's own volume is restored when this stops. It also stands down while another app
+/// is playing audio, so the buttons work normally for the phone's music or video.
 struct VolumeButtons: UIViewRepresentable {
     let active: Bool
     let onPress: (_ up: Bool) -> Void
@@ -22,11 +23,11 @@ struct VolumeButtons: UIViewRepresentable {
 
     func updateUIView(_ view: MPVolumeView, context: Context) {
         context.coordinator.onPress = onPress
-        if active { context.coordinator.start() } else { context.coordinator.stop() }
+        context.coordinator.setWanted(active)
     }
 
     static func dismantleUIView(_ view: MPVolumeView, coordinator: Coordinator) {
-        coordinator.stop()
+        coordinator.setWanted(false)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(onPress: onPress) }
@@ -41,7 +42,44 @@ struct VolumeButtons: UIViewRepresentable {
 
         init(onPress: @escaping (Bool) -> Void) { self.onPress = onPress }
 
-        func start() {
+        /// Whether the app wants capture (connected, enabled); actual capture also needs
+        /// the phone to be silent.
+        private var wanted = false
+        private var timer: Timer?
+        private var hintObserver: NSObjectProtocol?
+
+        func setWanted(_ value: Bool) {
+            guard value != wanted else { return }
+            wanted = value
+            if value {
+                // Fires when other apps start or stop audio; the timer covers anything it misses.
+                hintObserver = NotificationCenter.default.addObserver(
+                    forName: AVAudioSession.silenceSecondaryAudioHintNotification, object: nil, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.reevaluate() }
+                }
+                timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.reevaluate() }
+                }
+                reevaluate()
+            } else {
+                timer?.invalidate()
+                timer = nil
+                if let hintObserver { NotificationCenter.default.removeObserver(hintObserver) }
+                hintObserver = nil
+                stopCapture()
+            }
+        }
+
+        private func reevaluate() {
+            if wanted, !AVAudioSession.sharedInstance().isOtherAudioPlaying {
+                startCapture()
+            } else {
+                stopCapture()
+            }
+        }
+
+        private func startCapture() {
             guard observation == nil else { return }
             let session = AVAudioSession.sharedInstance()
             // Ambient + mix: don't interrupt anything the phone is playing.
@@ -63,7 +101,7 @@ struct VolumeButtons: UIViewRepresentable {
             }
         }
 
-        func stop() {
+        private func stopCapture() {
             guard observation != nil else { return }
             observation = nil
             if let savedVolume { setVolume(savedVolume) }
