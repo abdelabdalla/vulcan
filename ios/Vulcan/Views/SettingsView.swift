@@ -8,6 +8,7 @@ struct SettingsView: View {
     @AppStorage(Settings.scrollSpeed) private var scrollSpeed = 1.0
     @AppStorage(Settings.naturalScroll) private var naturalScroll = true
     @AppStorage(Settings.tapToClick) private var tapToClick = true
+    @AppStorage(Settings.scrollWheels) private var scrollWheels = true
     @AppStorage(Settings.volumeButtons) private var volumeButtons = true
     @AppStorage(Settings.combos) private var combos = Settings.defaultCombos
     @AppStorage(Settings.manualHost) private var manualHost = ""
@@ -25,6 +26,7 @@ struct SettingsView: View {
                     }
                     Toggle("Natural scrolling", isOn: $naturalScroll)
                     Toggle("Tap to click", isOn: $tapToClick)
+                    Toggle("Scroll wheels", isOn: $scrollWheels)
                 }
 
                 Section {

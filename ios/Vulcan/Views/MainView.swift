@@ -5,6 +5,7 @@ struct MainView: View {
     @State private var keyboardUp = false
     @State private var showSettings = false
     @AppStorage(Settings.volumeButtons) private var volumeButtons = true
+    @AppStorage(Settings.scrollWheels) private var scrollWheels = true
     @State private var showVolumeHUD = false
     @State private var hideVolumeHUD: Task<Void, Never>?
     @State private var tab = Mode.trackpad
@@ -72,6 +73,34 @@ struct MainView: View {
 
     @ViewBuilder
     private var trackpad: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                trackpadSurface
+                if scrollWheels {
+                    ScrollWheel(axis: .vertical) { conn.queueScroll(dx: $0, dy: $1) }
+                        .frame(width: 36)
+                }
+            }
+            if scrollWheels {
+                ScrollWheel(axis: .horizontal) { conn.queueScroll(dx: $0, dy: $1) }
+                    .frame(height: 36)
+                    .padding(.trailing, 44)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+
+        ButtonRow(keyboardUp: $keyboardUp)
+            .padding(12)
+
+        // Part of the layout rather than the keyboard's inputAccessoryView: on iOS 26 SwiftUI
+        // counted the accessory's height twice and left a gap above the keyboard.
+        if keyboardUp {
+            KeysBar(onHide: { keyboardUp = false })
+        }
+    }
+
+    private var trackpadSurface: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Theme.surface)
@@ -93,17 +122,6 @@ struct MainView: View {
                 .frame(width: 1, height: 1)
                 .opacity(0)
                 .allowsHitTesting(false)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
-
-        ButtonRow(keyboardUp: $keyboardUp)
-            .padding(12)
-
-        // Part of the layout rather than the keyboard's inputAccessoryView: on iOS 26 SwiftUI
-        // counted the accessory's height twice and left a gap above the keyboard.
-        if keyboardUp {
-            KeysBar(onHide: { keyboardUp = false })
         }
     }
 }
