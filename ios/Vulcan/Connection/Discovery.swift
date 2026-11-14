@@ -17,10 +17,9 @@ enum Discovery {
         let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_vulcan._tcp", domain: nil), using: params)
 
         return await withCheckedContinuation { continuation in
-            var finished = false
-            func finish(_ endpoint: NWEndpoint?) {
-                guard !finished else { return }
-                finished = true
+            let once = OnceFlag()
+            @Sendable func finish(_ endpoint: NWEndpoint?) {
+                guard once.claim() else { return }
                 browser.cancel()
                 continuation.resume(returning: endpoint)
             }
@@ -35,7 +34,6 @@ enum Discovery {
             browser.stateUpdateHandler = { state in
                 if case .failed = state { finish(nil) }
             }
-            // Everything runs on the main queue, so `finished` needs no locking.
             browser.start(queue: .main)
             DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(nil) }
         }
@@ -50,10 +48,9 @@ enum Discovery {
         let connection = NWConnection(to: endpoint, using: params)
 
         return await withCheckedContinuation { continuation in
-            var finished = false
-            func finish(_ host: String?) {
-                guard !finished else { return }
-                finished = true
+            let once = OnceFlag()
+            @Sendable func finish(_ host: String?) {
+                guard once.claim() else { return }
                 connection.cancel()
                 continuation.resume(returning: host)
             }

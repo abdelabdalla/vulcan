@@ -6,10 +6,17 @@ import UIKit
 final class KeyCaptureView: UIView, UIKeyInput {
     var onText: ((String) -> Void)?
     var onBackspace: (() -> Void)?
-    var accessory: UIView?
+    /// Called when the keyboard goes away, including when iOS dismisses it on its own.
+    var onResign: (() -> Void)?
 
     override var canBecomeFirstResponder: Bool { true }
-    override var inputAccessoryView: UIView? { accessory }
+
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { onResign?() }
+        return resigned
+    }
 
     // Always claim to have text so iOS sends backspace even when "empty".
     var hasText: Bool { true }
@@ -37,16 +44,7 @@ struct KeyboardHost: UIViewRepresentable {
         let view = KeyCaptureView()
         view.onText = { model.typeText($0) }
         view.onBackspace = { model.pressKey("BackSpace") }
-
-        let bar = UIHostingController(
-            rootView: KeysBar(onHide: { isActive = false }).environment(model)
-        )
-        bar.sizingOptions = .intrinsicContentSize
-        bar.view.backgroundColor = .clear
-        bar.view.frame = CGRect(x: 0, y: 0, width: 400, height: KeysBar.height)
-        bar.view.autoresizingMask = [.flexibleWidth]
-        context.coordinator.bar = bar
-        view.accessory = bar.view
+        view.onResign = { DispatchQueue.main.async { if isActive { isActive = false } } }
         return view
     }
 
@@ -56,12 +54,5 @@ struct KeyboardHost: UIViewRepresentable {
         } else if !isActive, view.isFirstResponder {
             view.resignFirstResponder()
         }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        /// Keeps the hosting controller alive for as long as its view is the accessory.
-        var bar: UIViewController?
     }
 }
