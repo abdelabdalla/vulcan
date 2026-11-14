@@ -81,8 +81,14 @@ fn parse_media(out: &str) -> ServerMsg {
 
 pub async fn volume(a: VolumeAction, value: Option<f64>) -> Result<()> {
     match a {
-        VolumeAction::Up => run("wpctl", &["set-volume", "-l", "1.0", SINK, "5%+"]).await,
-        VolumeAction::Down => run("wpctl", &["set-volume", SINK, "5%-"]).await,
+        VolumeAction::Up | VolumeAction::Down => {
+            // Step to the next multiple of 5% (28% → 30% / 25%), not by a flat 5%.
+            let ServerMsg::Volume { level, .. } = get_volume().await.context("couldn't read the volume")? else {
+                unreachable!()
+            };
+            let target = step_volume((level * 100.0).round() as i64, a == VolumeAction::Up);
+            run("wpctl", &["set-volume", SINK, &format!("{:.2}", target as f64 / 100.0)]).await
+        }
         VolumeAction::Mute => run("wpctl", &["set-mute", SINK, "toggle"]).await,
         VolumeAction::Set => {
             let v = value.context("volume set needs a value")?.clamp(0.0, 1.0);
@@ -90,6 +96,12 @@ pub async fn volume(a: VolumeAction, value: Option<f64>) -> Result<()> {
         }
     }
     .map(drop)
+}
+
+/// Next multiple of 5 above (or below) `percent`, within 0–100.
+fn step_volume(percent: i64, up: bool) -> i64 {
+    let target = if up { percent.div_euclid(5) * 5 + 5 } else { (percent + 4).div_euclid(5) * 5 - 5 };
+    target.clamp(0, 100)
 }
 
 pub async fn get_volume() -> Option<ServerMsg> {
@@ -242,6 +254,20 @@ pub async fn custom(id: &str, commands: &[CommandConfig]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn volume_steps_snap_to_fives() {
+        assert_eq!(step_volume(28, true), 30);
+        assert_eq!(step_volume(28, false), 25);
+        assert_eq!(step_volume(30, true), 35);
+        assert_eq!(step_volume(30, false), 25);
+        assert_eq!(step_volume(31, false), 30);
+        assert_eq!(step_volume(98, true), 100);
+        assert_eq!(step_volume(100, true), 100);
+        assert_eq!(step_volume(2, false), 0);
+        assert_eq!(step_volume(0, false), 0);
+        assert_eq!(step_volume(120, false), 100, "over 100% comes back into range");
+    }
 
     #[test]
     fn volume_output() {
