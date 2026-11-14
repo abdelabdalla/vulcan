@@ -39,7 +39,11 @@ final class ConnectionManager {
     var onClip: ((ServerMessage) -> Void)?
     var onClipSettings: (() -> Void)?
 
-    private var pairing: Pairing?
+    private(set) var pairing: Pairing?
+    /// Address of the current connection, for HTTPS transfers.
+    private(set) var activeHost: String?
+    var onConnected: (() -> Void)?
+    var onFileOffer: ((_ id: String, _ name: String) -> Void)?
     private var loop: Task<Void, Never>?
     private var socket: URLSessionWebSocketTask?
     private var session: URLSession?
@@ -152,6 +156,8 @@ final class ConnectionManager {
         if Task.isCancelled { return .unreachable }
 
         state = .connected(p.hostname)
+        activeHost = host
+        onConnected?()
         paused = false
         if host != p.host { onHostChanged?(host) }
         startTicker()
@@ -183,6 +189,8 @@ final class ConnectionManager {
                 artist: msg.artist ?? "",
                 player: msg.player ?? ""
             )
+        case "file_offer":
+            if let id = msg.id, let name = msg.name { onFileOffer?(id, name) }
         case "clip":
             onClip?(msg)
         case "clip_settings":
@@ -308,6 +316,10 @@ final class ConnectionManager {
 
     func showInfo(_ text: String) {
         show(toast: text, isError: false)
+    }
+
+    func showError(_ text: String) {
+        show(toast: text, isError: true)
     }
 
     private func show(toast text: String, isError: Bool) {

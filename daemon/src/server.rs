@@ -7,7 +7,8 @@ use axum::Router;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, State};
 use axum::response::Response;
-use axum::routing::get;
+use axum::extract::DefaultBodyLimit;
+use axum::routing::{get, post};
 use axum_server::tls_rustls::RustlsConfig;
 use tokio::sync::{broadcast, watch};
 use tracing::{info, warn};
@@ -18,6 +19,7 @@ use crate::input::Input;
 use crate::clipboard::{self, Clip, ClipMemory};
 use crate::config::RuntimeState;
 use crate::protocol::{ClientMsg, CommandInfo, PROTOCOL_VERSION, ServerMsg};
+use crate::files::{self, Offers};
 use crate::{actions, usb};
 use crate::tls::Tls;
 
@@ -38,6 +40,8 @@ pub struct AppState {
     /// New PC clipboard content, from the watcher.
     pub clip_tx: broadcast::Sender<Arc<Clip>>,
     pub clip_memory: Mutex<ClipMemory>,
+    /// Files queued for the phone.
+    pub offers: Offers,
 }
 
 impl AppState {
@@ -81,6 +85,12 @@ pub async fn run(st: Arc<AppState>, tls: &Tls) -> Result<()> {
     let app = Router::new()
         .route("/", get(|| async { "vulcand" }))
         .route("/ws", get(ws_handler))
+        .route("/files/upload", post(files::upload).layer(DefaultBodyLimit::disable()))
+        .route("/files/{id}", get(files::download_offer))
+        .route("/fs/list", get(files::fs_list))
+        .route("/fs/download", get(files::fs_download))
+        .route("/fs/walk", get(files::fs_walk))
+        .route("/fs/thumb", get(files::fs_thumb))
         .with_state(st);
     info!(%addr, "listening");
     axum_server::bind_rustls(addr, rustls)
@@ -135,6 +145,7 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     if !st.cfg.usb.is_empty() {
         caps.push("usb".into());
     }
+    caps.push("files".into());
     let commands = st
         .cfg
         .commands
@@ -162,6 +173,9 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     {
         send(&mut socket, &clip.to_msg()).await?;
     }
+    for offer in st.offers.pending() {
+        send(&mut socket, &ServerMsg::FileOffer { id: offer.id, name: offer.name, size: offer.size }).await?;
+    }
     st.status.send_modify(|s| s.connected.push(name.clone()));
 
     let result = run_session(&mut socket, &st, &token).await;
@@ -182,6 +196,7 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
     let mut last_paused = status_rx.borrow_and_update().paused;
     let mut last_runtime = st.runtime();
     let mut clip_rx = st.clip_tx.subscribe();
+    let mut offer_rx = st.offers.tx.subscribe();
     loop {
         tokio::select! {
             msg = socket.recv() => {
@@ -204,6 +219,13 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
                             send(socket, &clip.to_msg()).await?;
                         }
                     }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => return Ok(()),
+                }
+            }
+            offer = offer_rx.recv() => {
+                match offer {
+                    Ok(o) => send(socket, &ServerMsg::FileOffer { id: o.id, name: o.name, size: o.size }).await?,
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 }
@@ -294,6 +316,10 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
                 }
                 Err(e) => Err(e),
             }
+        }
+        ClientMsg::FileDone { id } => {
+            st.offers.done(&id);
+            Ok(vec![])
         }
         ClientMsg::ClipGet => match clipboard::read().await {
             Ok(Some(clip)) => Ok(vec![clip.to_msg()]),

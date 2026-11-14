@@ -88,6 +88,8 @@ enum ClientMessage: Encodable {
     /// Put the phone's clipboard on the PC; `auto` marks automatic sync.
     case clipSet(ClipPayload, auto: Bool)
     case clipGet
+    /// A file offer has been downloaded.
+    case fileDone(String)
     case clipSettings(toPhone: Bool?, toPC: Bool?)
     case refresh
     case ping
@@ -172,6 +174,9 @@ enum ClientMessage: Encodable {
             }
         case .clipGet:
             try c.encode("clip_get", forKey: .t)
+        case let .fileDone(id):
+            try c.encode("file_done", forKey: .t)
+            try c.encode(id, forKey: .id)
         case let .clipSettings(toPhone, toPC):
             try c.encode("clip_settings", forKey: .t)
             try c.encodeIfPresent(toPhone, forKey: .toPhone)
@@ -213,6 +218,10 @@ struct ServerMessage: Decodable {
     let hash: String?
     let toPhone: Bool?
     let toPc: Bool?
+    // File offers
+    let id: String?
+    let name: String?
+    let size: Int64?
 
     static func parse(_ text: String) -> ServerMessage? {
         let decoder = JSONDecoder()

@@ -2,6 +2,8 @@ mod actions;
 mod auth;
 mod clipboard;
 mod config;
+mod control;
+mod files;
 mod input;
 mod mdns;
 mod pairing;
@@ -49,6 +51,13 @@ enum Cmd {
     Devices,
     /// Unpair a device
     Revoke { name: String },
+    /// Send files to the phone (downloads when the Vulcan app is open)
+    Send {
+        #[arg(required = true)]
+        files: Vec<std::path::PathBuf>,
+    },
+    /// Add "Send to iPhone" to Dolphin's right-click menu
+    InstallDolphin,
     /// Print the udev rule that lets vulcand switch the [[usb]] devices in config.toml
     UdevRule,
 }
@@ -79,6 +88,15 @@ async fn main() -> Result<()> {
             for d in store.devices {
                 println!("{}", d.name);
             }
+            Ok(())
+        }
+        Cmd::Send { files } => {
+            println!("{}", control::send(&files).await?);
+            Ok(())
+        }
+        Cmd::InstallDolphin => {
+            let path = control::install_dolphin_menu()?;
+            println!("Installed {}. Right-click files in Dolphin → Send to iPhone.", path.display());
             Ok(())
         }
         Cmd::UdevRule => {
@@ -119,6 +137,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         status,
         clip_tx,
         clip_memory: Default::default(),
+        offers: Default::default(),
         cfg,
     });
 
@@ -126,6 +145,9 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         .inspect_err(|e| warn!("mDNS advertisement failed: {e:#}"))
         .ok();
     clipboard::spawn_watcher(st.clone());
+    if let Err(e) = control::spawn_listener(st.clone()) {
+        warn!("control socket unavailable, `vulcand send` won't work: {e:#}");
+    }
     if !no_tray {
         tray::spawn(st.clone());
     }

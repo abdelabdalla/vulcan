@@ -37,6 +37,18 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSCameraUsageDescription: Scan the pairing QR code shown on your PC.
+        NSPhotoLibraryAddUsageDescription: Save photos and videos sent from your PC.
+        # Received files show up in the Files app under On My iPhone › Vulcan.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        # Lets any app's share sheet offer "Open in Vulcan" to send a file to the PC.
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Any file
+            LSHandlerRank: Alternate
+            LSItemContentTypes:
+              - public.item
+              - public.content
+              - public.data
         NSLocalNetworkUsageDescription: Vulcan connects to your PC on your local network.
         NSBonjourServices:
           - _vulcan._tcp

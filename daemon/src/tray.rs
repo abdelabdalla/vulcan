@@ -146,6 +146,14 @@ impl ksni::Tray for VulcanTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
+                label: "Send file to phone…".into(),
+                icon_name: "document-send".into(),
+                activate: Box::new(|t: &mut Self| crate::files::pick_and_send(t.st.clone())),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
                 label: "Pair new device…".into(),
                 icon_name: "list-add".into(),
                 activate: Box::new(|t: &mut Self| {

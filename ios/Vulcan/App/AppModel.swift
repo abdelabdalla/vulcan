@@ -12,6 +12,7 @@ final class AppModel {
     private(set) var pairing: Pairing?
     let connection: ConnectionManager
     let clipboard: ClipboardSync
+    let transfers: TransferManager
     private(set) var mods: [String: ModState] = [:]
     var pairingError: String?
 
@@ -19,9 +20,12 @@ final class AppModel {
         let connection = ConnectionManager()
         self.connection = connection
         clipboard = ClipboardSync(connection: connection)
+        transfers = TransferManager(connection: connection)
         pairing = PairingStore.load()
         connection.onHostChanged = { [weak self] host in self?.updateHost(host) }
         connection.onClip = { [weak self] msg in self?.clipboard.receive(msg) }
+        connection.onConnected = { [weak self] in self?.transfers.flushPending() }
+        connection.onFileOffer = { [weak self] id, name in self?.transfers.handleOffer(id: id, name: name) }
         // Settings arrive on every connect, so this also catches copies made while away.
         connection.onClipSettings = { [weak self] in self?.clipboard.autoSendIfChanged() }
     }
