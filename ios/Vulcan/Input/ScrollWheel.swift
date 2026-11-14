@@ -1,9 +1,9 @@
 import SwiftUI
 import UIKit
 
-/// A one-finger scroll strip beside the trackpad, like a mouse wheel: drag down to scroll
-/// down, right to scroll right. Ridges move under the finger, with a haptic tick every few
-/// points, and a flick keeps scrolling with momentum.
+/// A one-finger scroll strip beside the trackpad. Content follows the finger, like a touch
+/// screen: drag down to scroll up, right to scroll left. Ridges move under the finger, with a
+/// haptic tick every few points, and a flick keeps scrolling with momentum.
 struct ScrollWheel: View {
     enum Axis {
         case vertical, horizontal
@@ -75,7 +75,8 @@ struct ScrollWheel: View {
     private func step(_ delta: CGFloat) {
         guard delta != 0 else { return }
         offset += delta
-        let amount = Double(delta) * scrollSpeed
+        // Content follows the finger, so scroll the opposite way to the drag.
+        let amount = -Double(delta) * scrollSpeed
         if axis == .vertical { onScroll(0, amount) } else { onScroll(amount, 0) }
         tickAccumulator += abs(delta)
         if tickAccumulator >= Self.tickDistance {
