@@ -6,12 +6,13 @@ use tracing::{info, warn};
 
 use crate::auth::DeviceStore;
 use crate::pairing;
+use crate::protocol::UsbInfo;
 use crate::server::{AppState, Status};
 
 /// StatusNotifierItem shown in Waybar's `tray` module.
 pub fn spawn(st: Arc<AppState>) {
     tokio::spawn(async move {
-        let tray = VulcanTray { status: st.status.borrow().clone(), devices: Vec::new(), st: st.clone() };
+        let tray = VulcanTray { status: st.status.borrow().clone(), devices: Vec::new(), usb: Vec::new(), st: st.clone() };
         // Waybar may not be up yet at login; wait for it instead of failing.
         let handle = match tray.assume_sni_available(true).spawn().await {
             Ok(h) => h,
@@ -34,6 +35,7 @@ struct VulcanTray {
     st: Arc<AppState>,
     status: Status,
     devices: Vec<String>,
+    usb: Vec<UsbInfo>,
 }
 
 impl VulcanTray {
@@ -78,6 +80,7 @@ impl ksni::Tray for VulcanTray {
     }
     fn menu_about_to_show(&mut self) {
         self.reload_devices();
+        self.usb = crate::usb::states(&self.st.cfg.usb);
     }
     fn menu(&self) -> Vec<MenuItem<Self>> {
         let devices: Vec<MenuItem<Self>> = if self.devices.is_empty() {
@@ -108,7 +111,7 @@ impl ksni::Tray for VulcanTray {
                 .collect()
         };
 
-        vec![
+        let mut items: Vec<MenuItem<Self>> = vec![
             StandardItem { label: self.summary(), enabled: false, ..Default::default() }.into(),
             MenuItem::Separator,
             CheckmarkItem {
@@ -138,6 +141,28 @@ impl ksni::Tray for VulcanTray {
             }
             .into(),
             SubMenu { label: "Devices".into(), submenu: devices, ..Default::default() }.into(),
+        ];
+        // Way back if a USB device was switched off from the phone.
+        for dev in self.usb.iter().filter(|d| d.present) {
+            let name = dev.name.clone();
+            let on = dev.on;
+            items.push(
+                CheckmarkItem {
+                    label: format!("{} connected", dev.name),
+                    checked: on,
+                    activate: Box::new(move |t: &mut Self| {
+                        match crate::usb::set(&t.st.cfg.usb, &name, Some(!on)) {
+                            Ok(msg) => info!("{msg} (tray)"),
+                            Err(e) => warn!("USB toggle failed: {e:#}"),
+                        }
+                        t.usb = crate::usb::states(&t.st.cfg.usb);
+                    }),
+                    ..Default::default()
+                }
+                .into(),
+            );
+        }
+        items.extend([
             StandardItem {
                 label: "Open config".into(),
                 icon_name: "document-edit".into(),
@@ -155,7 +180,8 @@ impl ksni::Tray for VulcanTray {
                 ..Default::default()
             }
             .into(),
-        ]
+        ]);
+        items
     }
 }
 

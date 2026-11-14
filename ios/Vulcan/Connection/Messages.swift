@@ -47,6 +47,16 @@ struct MonitorInfo: Decodable, Identifiable, Equatable {
     var id: String { name }
 }
 
+/// A USB device the PC can disconnect and reconnect (e.g. to turn off a keyboard's lights).
+struct UsbDevice: Decodable, Identifiable, Equatable {
+    let name: String
+    let icon: String
+    let on: Bool
+    let present: Bool
+
+    var id: String { name }
+}
+
 /// A custom command button defined in the PC's config.
 struct RemoteCommand: Decodable, Identifiable, Hashable {
     let id: String
@@ -66,6 +76,8 @@ enum ClientMessage: Encodable {
     case power(PowerAction)
     /// One monitor by connector name, or all of them when `monitor` is nil.
     case display(DisplayAction, monitor: String? = nil)
+    /// Toggle (or set, with `on`) a configured USB device by name.
+    case usb(String, on: Bool? = nil)
     case cmd(String)
     case refresh
     case ping
@@ -81,7 +93,7 @@ enum ClientMessage: Encodable {
     static let protocolVersion = 1
 
     private enum CodingKeys: String, CodingKey {
-        case t, token, device, v, dx, dy, b, s, k, mods, a, value, id, monitor
+        case t, token, device, v, dx, dy, b, s, k, mods, a, value, id, monitor, name, on
     }
 
     func encode(to encoder: Encoder) throws {
@@ -126,6 +138,10 @@ enum ClientMessage: Encodable {
             try c.encode("display", forKey: .t)
             try c.encode(a.rawValue, forKey: .a)
             try c.encodeIfPresent(monitor, forKey: .monitor)
+        case let .usb(name, on):
+            try c.encode("usb", forKey: .t)
+            try c.encode(name, forKey: .name)
+            try c.encodeIfPresent(on, forKey: .on)
         case let .cmd(id):
             try c.encode("cmd", forKey: .t)
             try c.encode(id, forKey: .id)
@@ -157,6 +173,7 @@ struct ServerMessage: Decodable {
     let artist: String?
     let player: String?
     let monitors: [MonitorInfo]?
+    let devices: [UsbDevice]?
 
     static func parse(_ text: String) -> ServerMessage? {
         try? JSONDecoder().decode(ServerMessage.self, from: Data(text.utf8))

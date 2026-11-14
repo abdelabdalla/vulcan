@@ -31,6 +31,7 @@ final class ConnectionManager {
     private(set) var volume: VolumeState?
     private(set) var media: MediaState?
     private(set) var monitors: [MonitorInfo] = []
+    private(set) var usbDevices: [UsbDevice] = []
     var onHostChanged: ((String) -> Void)?
 
     private var pairing: Pairing?
@@ -177,6 +178,8 @@ final class ConnectionManager {
                 artist: msg.artist ?? "",
                 player: msg.player ?? ""
             )
+        case "usb_devices":
+            usbDevices = msg.devices ?? []
         case "displays":
             monitors = msg.monitors ?? []
         case "info":

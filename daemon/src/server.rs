@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::auth::DeviceStore;
 use crate::config::{Config, Paths};
 use crate::input::Input;
-use crate::actions;
+use crate::{actions, usb};
 use crate::protocol::{ClientMsg, CommandInfo, PROTOCOL_VERSION, ServerMsg};
 use crate::tls::Tls;
 
@@ -103,6 +103,9 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     let mut caps = vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into()];
     if st.cfg.power.enabled {
         caps.push("power".into());
+    }
+    if !st.cfg.usb.is_empty() {
+        caps.push("usb".into());
     }
     let commands = st
         .cfg
@@ -208,6 +211,12 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
         ClientMsg::Display { a, monitor } => actions::display(a, monitor.as_deref(), &st.cfg.displays)
             .await
             .map(|(msg, monitors)| vec![ServerMsg::Info { msg }, ServerMsg::Displays { monitors }]),
+        ClientMsg::Usb { name, on } => {
+            info!(device = %name, ?on, "USB toggle from phone");
+            usb::set(&st.cfg.usb, &name, on).map(|msg| {
+                vec![ServerMsg::Info { msg }, ServerMsg::UsbDevices { devices: usb::states(&st.cfg.usb) }]
+            })
+        }
         ClientMsg::Cmd { id } => {
             info!(command = %id, "custom command from phone");
             actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])
@@ -221,7 +230,8 @@ async fn refresh(st: &AppState) -> Vec<ServerMsg> {
     let (volume, media, monitors) =
         tokio::join!(actions::get_volume(), actions::now_playing(), actions::monitors(&st.cfg.displays));
     let monitors = monitors.ok().map(|monitors| ServerMsg::Displays { monitors });
-    volume.into_iter().chain([media]).chain(monitors).collect()
+    let usb = (!st.cfg.usb.is_empty()).then(|| ServerMsg::UsbDevices { devices: usb::states(&st.cfg.usb) });
+    volume.into_iter().chain([media]).chain(monitors).chain(usb).collect()
 }
 
 fn handle_input(st: &AppState, msg: ClientMsg) -> anyhow::Result<Option<ServerMsg>> {

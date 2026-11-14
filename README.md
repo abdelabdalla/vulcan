@@ -63,6 +63,7 @@ The config lives at `~/.config/vulcan/config.toml` and is created on first run:
 | `power.enabled` | `true` | Allow lock, sleep, restart and shut down from the phone |
 | `power.lock` | `loginctl lock-session` | The command that locks the screen. The default needs hypridle running, because hypridle's `lock_cmd` is what starts hyprlock. |
 | `[displays]` | none | Friendly monitor names for the phone, keyed by connector name, e.g. `DP-2 = "Left"` |
+| `[[usb]]` | none | USB devices the phone can disconnect and reconnect. Each has a `name`, an `id` (`vendor:product` from `lsusb`) and an optional `icon`. |
 | `[[commands]]` | none | Buttons on the phone's Controls tab. Each has a `name`, a `run` command and an optional `icon` (an SF Symbol name). |
 
 Custom commands run through `sh -c`, and only the commands listed in the config can run. Start apps through Hyprland, so that Hyprland owns them rather than vulcand. With the Lua config:
@@ -74,13 +75,31 @@ icon = "chevron.left.forwardslash.chevron.right"
 run = "hyprctl dispatch 'hl.dsp.exec_cmd(\"code\")'"
 ```
 
+### Switching USB devices off
+
+Some devices' lights have no software control: the Cooler Master Quickfire TK keyboard, for example. Vulcan can disconnect such a device instead. Disconnecting deauthorizes the device and lets the kernel suspend it, which cuts it to standby power so its lights go off. Reconnecting brings it back.
+
+This needs a one-time udev rule so vulcand can write the device's sysfs attributes without root. Add the devices under `[[usb]]` in the config, then run:
+
+```sh
+vulcand udev-rule | sudo tee /etc/udev/rules.d/70-vulcan-usb.rules
+sudo udevadm control --reload
+sudo udevadm trigger --subsystem-match=usb --action=add
+```
+
+If a device is left disconnected, there are three ways to get it back:
+
+- the tray menu's "<name> connected" item
+- the phone
+- replugging the device or rebooting
+
 ## Protocol
 
 The phone and PC exchange JSON text frames over `wss://<pc>:47800/ws`. The first frame must be `hello`.
 
 | Direction | Messages |
 |---|---|
-| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `cmd{id}`, `refresh`, `ping` |
-| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `paused{paused}`, `pong` |
+| Phone → PC | `hello{token,device,v}`, `move{dx,dy}`, `scroll{dx,dy}`, `button{b,s}`, `text{s}`, `key{k,mods,s}`, `media{a}`, `volume{a,value?}`, `power{a}`, `display{a,monitor?}`, `usb{name,on?}`, `cmd{id}`, `refresh`, `ping` |
+| PC → phone | `welcome{caps,commands}`, `error{msg}`, `info{msg}`, `volume{level,muted}`, `media{status,title,artist,player}`, `displays{monitors}`, `usb_devices{devices}`, `paused{paused}`, `pong` |
 
 See [`daemon/src/protocol.rs`](daemon/src/protocol.rs) for the full definitions.

@@ -42,6 +42,22 @@ pub struct Config {
     pub commands: Vec<CommandConfig>,
     /// Friendly monitor names for the phone, keyed by connector: `DP-2 = "Left"`.
     pub displays: std::collections::HashMap<String, String>,
+    /// USB devices the phone can disconnect and reconnect.
+    pub usb: Vec<UsbConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UsbConfig {
+    pub name: String,
+    /// "vendor:product" as shown by `lsusb`, e.g. "2516:0011".
+    pub id: String,
+    /// SF Symbol name shown on the phone.
+    #[serde(default = "default_usb_icon")]
+    pub icon: String,
+}
+
+fn default_usb_icon() -> String {
+    "cable.connector".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +120,7 @@ impl Default for Config {
             power: PowerConfig::default(),
             commands: Vec::new(),
             displays: Default::default(),
+            usb: Vec::new(),
         }
     }
 }
@@ -145,6 +162,16 @@ lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts h
 [displays]
 # DP-2 = "Left"
 # DP-1 = "Right"
+
+# USB devices the phone can switch off and on (disconnects them, which cuts their
+# lights). `id` is vendor:product from `lsusb`. Needs a one-time udev rule:
+#   vulcand udev-rule | sudo tee /etc/udev/rules.d/70-vulcan-usb.rules
+#   sudo udevadm control --reload && sudo udevadm trigger --subsystem-match=usb --action=add
+#
+# [[usb]]
+# name = "Keyboard light"
+# id = "2516:0011"
+# icon = "keyboard"
 
 # Buttons on the phone's Controls tab. `icon` is an SF Symbol name.
 # Launch apps through Hyprland so they don't belong to vulcand.

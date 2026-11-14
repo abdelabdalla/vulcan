@@ -17,6 +17,7 @@ struct ControlsView: View {
                 nowPlaying
                 volume
                 if conn.caps.contains("display") { screens }
+                if conn.caps.contains("usb"), !conn.usbDevices.isEmpty { usb }
                 if conn.caps.contains("power") { power }
                 commands
             }
@@ -130,6 +131,37 @@ struct ControlsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+
+    private var usb: some View {
+        Card(title: "USB devices", icon: "cable.connector") {
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 10)], spacing: 10) {
+                ForEach(conn.usbDevices) { device in
+                    Button {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        conn.send(.usb(device.name))
+                    } label: {
+                        VStack(spacing: 6) {
+                            Image(systemName: UIImage(systemName: device.icon) != nil ? device.icon : "cable.connector")
+                                .font(.title2)
+                            Text(device.name)
+                                .font(.footnote)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.center)
+                            Text(!device.present ? "Unplugged" : device.on ? "On" : "Off")
+                                .font(.caption2)
+                                .opacity(0.7)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 84)
+                    }
+                    .buttonStyle(KeyStyle(highlight: device.on && device.present))
+                    .disabled(!device.present)
+                }
+            }
+            Text("Switching a device off disconnects it from the PC. Typing from the phone still works, and the PC's tray menu can reconnect it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

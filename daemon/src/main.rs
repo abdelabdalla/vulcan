@@ -8,6 +8,7 @@ mod protocol;
 mod server;
 mod tls;
 mod tray;
+mod usb;
 mod util;
 
 use std::sync::{Arc, Mutex};
@@ -47,6 +48,8 @@ enum Cmd {
     Devices,
     /// Unpair a device
     Revoke { name: String },
+    /// Print the udev rule that lets vulcand switch the [[usb]] devices in config.toml
+    UdevRule,
 }
 
 #[tokio::main]
@@ -75,6 +78,13 @@ async fn main() -> Result<()> {
             for d in store.devices {
                 println!("{}", d.name);
             }
+            Ok(())
+        }
+        Cmd::UdevRule => {
+            let out = std::process::Command::new("id").arg("-gn").output()?;
+            let group = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            anyhow::ensure!(!group.is_empty(), "couldn't determine your group");
+            print!("{}", usb::udev_rule(&cfg.usb, &group)?);
             Ok(())
         }
         Cmd::Revoke { name } => {

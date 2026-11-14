@@ -79,6 +79,17 @@ pub enum PowerAction {
     Poweroff,
 }
 
+/// A switchable USB device from the config (e.g. a keyboard whose lights can't be turned off).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsbInfo {
+    pub name: String,
+    pub icon: String,
+    /// Connected (authorized). False while switched off.
+    pub on: bool,
+    /// Plugged in at all.
+    pub present: bool,
+}
+
 /// A custom command from the config, as shown on the phone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandInfo {
@@ -121,6 +132,12 @@ pub enum ClientMsg {
         #[serde(default)]
         monitor: Option<String>,
     },
+    /// Connect, disconnect or (with no `on`) toggle a configured USB device by name.
+    Usb {
+        name: String,
+        #[serde(default)]
+        on: Option<bool>,
+    },
     /// Run a custom command from the config by id.
     Cmd { id: String },
     /// Ask for current volume and now-playing info.
@@ -147,6 +164,7 @@ pub enum ServerMsg {
     /// `status` is Playing / Paused / Stopped, or "none" when no player is running.
     Media { status: String, title: String, artist: String, player: String },
     Displays { monitors: Vec<MonitorInfo> },
+    UsbDevices { devices: Vec<UsbInfo> },
     Paused { paused: bool },
     Pong,
 }
@@ -175,6 +193,8 @@ mod tests {
         assert_eq!(m, ClientMsg::Display { a: DisplayAction::Toggle, monitor: None });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"display","a":"off","monitor":"DP-2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Display { a: DisplayAction::Off, monitor: Some("DP-2".into()) });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"usb","name":"Keyboard light"}"#).unwrap();
+        assert_eq!(m, ClientMsg::Usb { name: "Keyboard light".into(), on: None });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
     }
