@@ -251,19 +251,54 @@ pub async fn upload(
     Ok(Json(UploadResult { name: saved, size }))
 }
 
-/// Desktop notification with a button that shows the file in Dolphin.
+/// Files received recently, and a counter that tells the latest arrival apart.
+static RECEIVED: Mutex<(Vec<PathBuf>, u64)> = Mutex::new((Vec::new(), 0));
+
+/// How long to wait for more files before announcing a batch (photos shared together arrive
+/// back to back).
+const BATCH_QUIET: Duration = Duration::from_secs(3);
+
+/// Desktop notification with a button that shows the files in Dolphin. Files that arrive
+/// close together share one notification.
 fn notify_received(path: PathBuf) {
+    let generation = {
+        let mut r = RECEIVED.lock().unwrap();
+        r.0.push(path);
+        r.1 += 1;
+        r.1
+    };
     std::thread::spawn(move || {
-        let name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        std::thread::sleep(BATCH_QUIET);
+        let paths = {
+            let mut r = RECEIVED.lock().unwrap();
+            if r.1 != generation {
+                return; // a later file will announce the batch
+            }
+            std::mem::take(&mut r.0)
+        };
+        let (title, body) = received_message(&paths);
         let out = std::process::Command::new("notify-send")
-            .args(["--app-name=Vulcan", "--icon=document-save", "--action=open=Show in folder", "Received from phone", &name])
+            .args(["--app-name=Vulcan", "--icon=document-save", "--action=open=Show in folder", &title, &body])
             .output();
         if let Ok(out) = out
             && String::from_utf8_lossy(&out.stdout).trim() == "open"
         {
-            let _ = std::process::Command::new("dolphin").arg("--select").arg(&path).spawn();
+            let _ = std::process::Command::new("dolphin").arg("--select").args(&paths).spawn();
         }
     });
+}
+
+fn received_message(paths: &[PathBuf]) -> (String, String) {
+    let names: Vec<String> = paths.iter().map(|p| p.file_name().unwrap_or_default().to_string_lossy().into_owned()).collect();
+    if names.len() == 1 {
+        return ("Received from phone".into(), names[0].clone());
+    }
+    const SHOWN: usize = 3;
+    let mut body = names[..names.len().min(SHOWN)].join(", ");
+    if names.len() > SHOWN {
+        body.push_str(&format!(" and {} more", names.len() - SHOWN));
+    }
+    (format!("Received {} files from phone", names.len()), body)
 }
 
 // MARK: Browsing the home folder (read-only)
@@ -597,6 +632,14 @@ pub fn pick_and_send(st: Arc<AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn received_message_batches() {
+        let one = [PathBuf::from("/x/a.jpg")];
+        assert_eq!(received_message(&one), ("Received from phone".into(), "a.jpg".into()));
+        let many: Vec<PathBuf> = ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"].iter().map(|n| PathBuf::from("/x").join(n)).collect();
+        assert_eq!(received_message(&many), ("Received 5 files from phone".into(), "a.jpg, b.jpg, c.jpg and 2 more".into()));
+    }
 
     #[test]
     fn names() {

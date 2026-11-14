@@ -34,7 +34,13 @@ struct Pairing: Codable, Equatable {
 }
 
 /// Keeps the pairing in the Keychain (survives the weekly re-sign as long as the team and bundle ID stay the same).
+/// It lives in a keychain group shared with the Share extension, so that can send files on its own.
 enum PairingStore {
+    /// `<team prefix>vulcan.shared`, filled in at build time (see project.yml).
+    private static var group: String? {
+        (Bundle.main.object(forInfoDictionaryKey: "VulcanKeychainGroup") as? String).flatMap { $0.isEmpty ? nil : $0 }
+    }
+
     private static var query: [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -43,6 +49,7 @@ enum PairingStore {
         ]
     }
 
+    /// Searches every keychain group this target can see.
     static func load() -> Pairing? {
         var q = query
         q[kSecReturnData as String] = true
@@ -60,7 +67,21 @@ enum PairingStore {
         var q = query
         q[kSecValueData as String] = data
         q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        if let group {
+            q[kSecAttrAccessGroup as String] = group
+            if SecItemAdd(q as CFDictionary, nil) == errSecSuccess { return }
+            // Not signed with the shared group (e.g. the simulator): keep it app-only.
+            q[kSecAttrAccessGroup as String] = nil
+        }
         SecItemAdd(q as CFDictionary, nil)
+    }
+
+    /// Pairings saved before the Share extension existed sit in the app's private group; move them.
+    static func shareWithExtension() {
+        guard let group, let pairing = load() else { return }
+        var q = query
+        q[kSecAttrAccessGroup as String] = group
+        if SecItemCopyMatching(q as CFDictionary, nil) != errSecSuccess { save(pairing) }
     }
 
     static func clear() {

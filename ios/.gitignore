@@ -5,3 +5,5 @@ build/
 DerivedData/
 xcuserdata/
 .DS_Store
+ShareExtension/Info.plist
+*.entitlements
