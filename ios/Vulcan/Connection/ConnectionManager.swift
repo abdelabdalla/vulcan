@@ -273,7 +273,8 @@ final class ConnectionManager {
     }
 }
 
-private final class OnceFlag: @unchecked Sendable {
+/// Lets exactly one of several racing callbacks (result vs. timeout) win.
+final class OnceFlag: @unchecked Sendable {
     private var done = false
     private let lock = NSLock()
 
