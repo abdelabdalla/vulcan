@@ -7,6 +7,7 @@ enum Settings {
     static let naturalScroll = "naturalScroll"
     static let tapToClick = "tapToClick"
     static let volumeButtons = "volumeButtons"
+    static let scrollWheels = "scrollWheels"
     static let combos = "combos"
     static let manualHost = "manualHost"
 
@@ -19,6 +20,7 @@ enum Settings {
             naturalScroll: true,
             tapToClick: true,
             volumeButtons: true,
+            scrollWheels: true,
             combos: defaultCombos,
             manualHost: "",
         ])
