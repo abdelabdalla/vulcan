@@ -1,0 +1,8 @@
+// Signing for free Apple ID ("Personal Team") builds.
+// Put your own values in Local.xcconfig (git-ignored) so `xcodegen` doesn't wipe them:
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   PRODUCT_BUNDLE_IDENTIFIER = com.yourname.vulcan
+DEVELOPMENT_TEAM =
+PRODUCT_BUNDLE_IDENTIFIER = com.abdelabdalla.vulcan
+
+#include? "Local.xcconfig"
