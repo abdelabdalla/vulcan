@@ -89,6 +89,8 @@ pub async fn run(st: Arc<AppState>, tls: &Tls) -> Result<()> {
         .route("/files/{id}", get(files::download_offer))
         .route("/fs/list", get(files::fs_list))
         .route("/fs/download", get(files::fs_download))
+        .route("/fs/walk", get(files::fs_walk))
+        .route("/fs/thumb", get(files::fs_thumb))
         .with_state(st);
     info!(%addr, "listening");
     axum_server::bind_rustls(addr, rustls)

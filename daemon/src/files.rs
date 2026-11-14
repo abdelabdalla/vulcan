@@ -362,6 +362,211 @@ pub async fn fs_download(
     file_response(&path, &name).await
 }
 
+// MARK: Whole-folder downloads
+
+const MAX_WALK: usize = 10_000;
+
+#[derive(Serialize)]
+pub struct WalkFile {
+    /// Home-relative path, for /fs/download.
+    path: String,
+    /// Where it goes on the phone: the chosen folder's name plus the path inside it.
+    rel: String,
+    size: u64,
+}
+
+#[derive(Serialize)]
+pub struct Walk {
+    files: Vec<WalkFile>,
+    total: u64,
+    truncated: bool,
+}
+
+/// Every file under a folder, so the phone can download it with its structure.
+/// Symlinked folders aren't followed (no cycles); symlinked files must stay inside home.
+pub async fn fs_walk(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<FsQuery>,
+) -> Result<Json<Walk>, ApiError> {
+    authorize(&st, &headers)?;
+    let home = home()?.canonicalize()?;
+    let (root, _) = resolve(&home, &q.path, q.hidden)?;
+    if !root.is_dir() {
+        return Err(err(StatusCode::BAD_REQUEST, "not a folder"));
+    }
+    let hidden = q.hidden;
+    let walk = tokio::task::spawn_blocking(move || walk_dir(&home, &root, hidden))
+        .await
+        .map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(walk))
+}
+
+fn walk_dir(home: &Path, root: &Path, hidden: bool) -> Walk {
+    let root_name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "Home".into());
+    let mut out = Walk { files: Vec::new(), total: 0, truncated: false };
+    let mut stack = vec![(root.to_path_buf(), root_name)];
+    while let Some((dir, prefix)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !hidden && is_hidden(&name) {
+                continue;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            let rel = format!("{prefix}/{name}");
+            let real = if ft.is_symlink() {
+                match e.path().canonicalize() {
+                    Ok(p) if p.starts_with(home) && p.is_file() => p,
+                    _ => continue,
+                }
+            } else if ft.is_dir() {
+                stack.push((e.path(), rel));
+                continue;
+            } else if ft.is_file() {
+                e.path()
+            } else {
+                continue;
+            };
+            if out.files.len() >= MAX_WALK {
+                out.truncated = true;
+                return out;
+            }
+            let size = std::fs::metadata(&real).map_or(0, |m| m.len());
+            let Ok(home_rel) = real.strip_prefix(home) else { continue };
+            out.total += size;
+            out.files.push(WalkFile { path: home_rel.to_string_lossy().into_owned(), rel, size });
+        }
+    }
+    out
+}
+
+// MARK: Thumbnails
+
+/// At most a few thumbnail generators at once, however fast the phone scrolls.
+static THUMB_SLOTS: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(3));
+
+const IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "gif", "webp", "heic", "heif", "avif", "bmp", "tif", "tiff"];
+const VIDEO_EXTS: &[&str] = &["mp4", "mov", "m4v", "mkv", "webm", "avi"];
+
+/// A ~256px preview of an image or video. Uses the freedesktop thumbnail cache (filled by
+/// Dolphin) when it's fresh, otherwise renders one with ImageMagick or ffmpeg and caches it.
+pub async fn fs_thumb(
+    State(st): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(q): Query<FsQuery>,
+) -> Result<Response, ApiError> {
+    authorize(&st, &headers)?;
+    let (path, _) = resolve(&home()?, &q.path, q.hidden)?;
+    let meta = tokio::fs::metadata(&path).await?;
+    if !meta.is_file() {
+        return Err(err(StatusCode::BAD_REQUEST, "not a file"));
+    }
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let video = VIDEO_EXTS.contains(&ext.as_str());
+    if !video && !IMAGE_EXTS.contains(&ext.as_str()) {
+        return Err(err(StatusCode::NOT_FOUND, "no preview for this type"));
+    }
+    let modified = meta.modified().unwrap_or(UNIX_EPOCH);
+
+    if let Some(png) = freedesktop_thumb(&path, modified).await {
+        return Ok(image_response(png, "image/png"));
+    }
+    let cache = thumb_cache_path(&path, modified, meta.len());
+    if let Ok(jpg) = tokio::fs::read(&cache).await {
+        return Ok(image_response(jpg, "image/jpeg"));
+    }
+    let _slot = THUMB_SLOTS.acquire().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let jpg = if video { video_thumb(&path).await } else { image_thumb(&path).await }
+        .ok_or_else(|| err(StatusCode::NOT_FOUND, "couldn't render a preview"))?;
+    if let Some(dir) = cache.parent() {
+        let _ = tokio::fs::create_dir_all(dir).await;
+        let _ = tokio::fs::write(&cache, &jpg).await;
+    }
+    Ok(image_response(jpg, "image/jpeg"))
+}
+
+fn image_response(bytes: Vec<u8>, mime: &'static str) -> Response {
+    let mut resp = Response::new(Body::from(bytes));
+    resp.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("private, max-age=86400"));
+    resp
+}
+
+/// file:// URI as freedesktop thumbnailers hash it (path percent-encoded, '/' kept).
+fn file_uri(path: &Path) -> String {
+    let mut uri = String::from("file://");
+    for b in path.to_string_lossy().bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b'!' | b'$' | b'&' | b'\''
+            | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' => uri.push(b as char),
+            _ => uri.push_str(&format!("%{b:02X}")),
+        }
+    }
+    uri
+}
+
+async fn freedesktop_thumb(path: &Path, modified: SystemTime) -> Option<Vec<u8>> {
+    use md5::{Digest, Md5};
+    let base = directories::BaseDirs::new()?.cache_dir().join("thumbnails");
+    let name = format!("{}.png", hex::encode(Md5::digest(file_uri(path).as_bytes())));
+    for size in ["large", "x-large", "normal"] {
+        let thumb = base.join(size).join(&name);
+        let Ok(meta) = tokio::fs::metadata(&thumb).await else { continue };
+        // Stale if the file changed after the thumbnail was made.
+        if meta.modified().is_ok_and(|t| t >= modified) {
+            return tokio::fs::read(&thumb).await.ok();
+        }
+    }
+    None
+}
+
+fn thumb_cache_path(path: &Path, modified: SystemTime, size: u64) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let secs = modified.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let key = hex::encode(Sha256::digest(format!("{}\0{secs}\0{size}", path.display()).as_bytes()));
+    let base = directories::BaseDirs::new().map_or_else(std::env::temp_dir, |b| b.cache_dir().to_path_buf());
+    base.join("vulcan/thumbs").join(format!("{}.jpg", &key[..32]))
+}
+
+async fn run_thumb(mut cmd: tokio::process::Command) -> Option<Vec<u8>> {
+    cmd.stdin(std::process::Stdio::null()).kill_on_drop(true);
+    let out = tokio::time::timeout(Duration::from_secs(10), cmd.output()).await.ok()?.ok()?;
+    (out.status.success() && !out.stdout.is_empty()).then_some(out.stdout)
+}
+
+async fn image_thumb(path: &Path) -> Option<Vec<u8>> {
+    // [0]: first frame only (GIFs, multi-page TIFFs).
+    let mut input = path.as_os_str().to_owned();
+    input.push("[0]");
+    let mut cmd = tokio::process::Command::new("magick");
+    cmd.arg(input).args(["-auto-orient", "-thumbnail", "256x256>", "-quality", "80", "jpg:-"]);
+    run_thumb(cmd).await
+}
+
+async fn video_thumb(path: &Path) -> Option<Vec<u8>> {
+    // A frame 1 s in avoids black intros; very short clips fall back to the first frame.
+    for seek in ["1", "0"] {
+        let mut cmd = tokio::process::Command::new("ffmpeg");
+        cmd.args(["-v", "error", "-ss", seek, "-i"]).arg(path).args([
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale=256:256:force_original_aspect_ratio=decrease",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "mjpeg",
+            "-",
+        ]);
+        if let Some(jpg) = run_thumb(cmd).await {
+            return Some(jpg);
+        }
+    }
+    None
+}
+
 /// Ask with zenity which files to send, then queue them (tray menu).
 pub fn pick_and_send(st: Arc<AppState>) {
     std::thread::spawn(move || {
@@ -411,6 +616,33 @@ mod tests {
         assert_eq!(unique_path(&dir, "a.txt"), dir.join("a (2).txt"));
         assert_eq!(unique_path(&dir, "b.txt"), dir.join("b.txt"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn uri_for_thumbnail_cache() {
+        assert_eq!(file_uri(Path::new("/home/a/My Pics/ü.jpg")), "file:///home/a/My%20Pics/%C3%BC.jpg");
+        assert_eq!(file_uri(Path::new("/home/a/x(1)+y.png")), "file:///home/a/x(1)+y.png");
+    }
+
+    #[test]
+    fn walk_keeps_structure_and_skips_hidden() {
+        let home = std::env::temp_dir().join(format!("vulcan-walk-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("Pics/2024")).unwrap();
+        std::fs::create_dir_all(home.join("Pics/.cache")).unwrap();
+        std::fs::write(home.join("Pics/a.jpg"), "aa").unwrap();
+        std::fs::write(home.join("Pics/2024/b.jpg"), "bbb").unwrap();
+        std::fs::write(home.join("Pics/.cache/c"), "c").unwrap();
+        std::os::unix::fs::symlink(home.join("Pics"), home.join("Pics/2024/loop")).unwrap();
+        let home = home.canonicalize().unwrap();
+
+        let w = walk_dir(&home, &home.join("Pics"), false);
+        let mut rels: Vec<&str> = w.files.iter().map(|f| f.rel.as_str()).collect();
+        rels.sort();
+        assert_eq!(rels, ["Pics/2024/b.jpg", "Pics/a.jpg"], "no hidden files, symlinked folder not followed");
+        assert_eq!(w.total, 5);
+        assert!(w.files.iter().any(|f| f.path == "Pics/2024/b.jpg"));
+        assert_eq!(walk_dir(&home, &home.join("Pics"), true).files.len(), 3);
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
