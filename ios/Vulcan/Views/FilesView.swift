@@ -13,6 +13,19 @@ struct FilesView: View {
 
     var body: some View {
         NavigationStack {
+            if model.connection.isConnected, !model.connection.caps.contains("files") {
+                ContentUnavailableView(
+                    "Needs Wi-Fi",
+                    systemImage: "wifi.exclamationmark",
+                    description: Text("You're connected over Bluetooth. File transfer and browsing the PC work once the phone and PC are on the same Wi-Fi.")
+                )
+            } else {
+                filesList
+            }
+        }
+    }
+
+    private var filesList: some View {
             List {
                 Section {
                     PhotosPicker(selection: $photoItems, maxSelectionCount: 50, matching: .any(of: [.images, .videos])) {
@@ -65,7 +78,6 @@ struct FilesView: View {
                 photoItems = []
                 Task { await sendPhotos(items) }
             }
-        }
     }
 
     private func sendPhotos(_ items: [PhotosPickerItem]) async {

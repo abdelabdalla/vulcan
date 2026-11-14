@@ -10,7 +10,7 @@ use axum::response::Response;
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum_server::tls_rustls::RustlsConfig;
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{broadcast, mpsc, watch};
 use tracing::{info, warn};
 
 use crate::auth::DeviceStore;
@@ -108,24 +108,72 @@ async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     ws.max_message_size(32 << 20).max_frame_size(32 << 20).on_upgrade(move |socket| async move {
-        if let Err(e) = session(socket, st, addr).await {
+        let (link, pump) = websocket_link(socket, addr.to_string());
+        tokio::spawn(pump);
+        if let Err(e) = session(link, st).await {
             warn!(%addr, "session ended with error: {e:#}");
         }
     })
 }
 
-async fn send(socket: &mut WebSocket, msg: &ServerMsg) -> Result<()> {
-    socket.send(Message::Text(serde_json::to_string(msg)?.into())).await?;
-    Ok(())
+/// How a phone is connected. Large transfers (files, clipboard images) only go over Wi-Fi.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    WiFi,
+    Bluetooth,
 }
 
-async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> Result<()> {
+/// A connected phone as a pair of text-message channels, whatever the transport.
+pub struct Link {
+    pub incoming: mpsc::Receiver<String>,
+    pub outgoing: mpsc::Sender<String>,
+    pub transport: Transport,
+    pub peer: String,
+}
+
+impl Link {
+    async fn send(&self, msg: &ServerMsg) -> Result<()> {
+        self.outgoing.send(serde_json::to_string(msg)?).await.map_err(|_| anyhow::anyhow!("link closed"))
+    }
+}
+
+/// Bridge a WebSocket to a Link; the returned future pumps until either side closes.
+fn websocket_link(mut socket: WebSocket, peer: String) -> (Link, impl std::future::Future<Output = ()>) {
+    let (in_tx, in_rx) = mpsc::channel::<String>(64);
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(64);
+    let pump = async move {
+        loop {
+            tokio::select! {
+                msg = socket.recv() => match msg {
+                    // Phones vanish without a clean close (sleep, Wi-Fi drop); that's a normal end.
+                    Some(Ok(Message::Text(t))) => {
+                        if in_tx.send(t.to_string()).await.is_err() { break }
+                    }
+                    Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
+                    Some(Ok(_)) => {}
+                },
+                out = out_rx.recv() => match out {
+                    Some(text) => {
+                        if socket.send(Message::Text(text.into())).await.is_err() { break }
+                    }
+                    None => break,
+                },
+            }
+        }
+        let _ = socket.send(Message::Close(None)).await;
+    };
+    (Link { incoming: in_rx, outgoing: out_tx, transport: Transport::WiFi, peer }, pump)
+}
+
+pub async fn session(mut link: Link, st: Arc<AppState>) -> Result<()> {
+    let addr = link.peer.clone();
+    let wifi = link.transport == Transport::WiFi;
     // The first frame must be a hello carrying a paired token.
-    let token = match tokio::time::timeout(Duration::from_secs(5), socket.recv()).await {
-        Ok(Some(Ok(Message::Text(t)))) => match serde_json::from_str::<ClientMsg>(&t) {
+    let token = match tokio::time::timeout(Duration::from_secs(5), link.incoming.recv()).await {
+        Ok(Some(t)) => match serde_json::from_str::<ClientMsg>(&t) {
             Ok(ClientMsg::Hello { token, .. }) => token,
             _ => {
-                send(&mut socket, &ServerMsg::Error { msg: "expected hello".into() }).await?;
+                link.send(&ServerMsg::Error { msg: "expected hello".into() }).await?;
                 return Ok(());
             }
         },
@@ -135,11 +183,11 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     let Some(name) = name else {
         warn!(%addr, "rejected connection with unknown token");
         tokio::time::sleep(Duration::from_secs(1)).await;
-        send(&mut socket, &ServerMsg::Error { msg: "not paired".into() }).await?;
+        link.send(&ServerMsg::Error { msg: "not paired".into() }).await?;
         return Ok(());
     };
 
-    info!(%addr, device = %name, "connected");
+    info!(%addr, device = %name, transport = ?link.transport, "connected");
     let mut caps =
         vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into(), "clipboard".into()];
     if st.cfg.power.enabled {
@@ -148,14 +196,17 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     if !st.cfg.usb.is_empty() {
         caps.push("usb".into());
     }
-    caps.push("files".into());
+    // File transfer and the PC browser use HTTPS, so they need Wi-Fi.
+    if wifi {
+        caps.push("files".into());
+    }
     let commands = st
         .cfg
         .commands
         .iter()
         .map(|c| CommandInfo { id: c.name.clone(), name: c.name.clone(), icon: c.icon.clone() })
         .collect();
-    send(&mut socket, &ServerMsg::Welcome {
+    link.send(&ServerMsg::Welcome {
         v: PROTOCOL_VERSION,
         host: st.host.clone(),
         device: name.clone(),
@@ -164,24 +215,27 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     })
     .await?;
     if st.paused() {
-        send(&mut socket, &ServerMsg::Paused { paused: true }).await?;
+        link.send(&ServerMsg::Paused { paused: true }).await?;
     }
     let rt = st.runtime();
-    send(&mut socket, &ServerMsg::ClipSettings { to_phone: rt.clip_to_phone, to_pc: rt.clip_to_pc }).await?;
+    link.send(&ServerMsg::ClipSettings { to_phone: rt.clip_to_phone, to_pc: rt.clip_to_pc }).await?;
     // The phone reconnects whenever it comes to the front; offer the current PC clipboard.
     // It skips content it already has (by hash), so only new PC copies replace its clipboard.
     if rt.clip_to_phone
         && !st.paused()
         && let Ok(Some(clip)) = clipboard::read().await
+        && clip.fits(link.transport)
     {
-        send(&mut socket, &clip.to_msg()).await?;
+        link.send(&clip.to_msg()).await?;
     }
-    for offer in st.offers.pending() {
-        send(&mut socket, &ServerMsg::FileOffer { id: offer.id, name: offer.name, size: offer.size }).await?;
+    if wifi {
+        for offer in st.offers.pending() {
+            link.send(&ServerMsg::FileOffer { id: offer.id, name: offer.name, size: offer.size }).await?;
+        }
     }
     st.status.send_modify(|s| s.connected.push(name.clone()));
 
-    let result = run_session(&mut socket, &st, &token).await;
+    let result = run_session(&mut link, &st, &token).await;
 
     st.input.lock().unwrap().release_all();
     st.status.send_modify(|s| {
@@ -193,7 +247,8 @@ async fn session(mut socket: WebSocket, st: Arc<AppState>, addr: SocketAddr) -> 
     result
 }
 
-async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Result<()> {
+async fn run_session(link: &mut Link, st: &AppState, token: &str) -> Result<()> {
+    let wifi = link.transport == Transport::WiFi;
     let mut recheck = tokio::time::interval(Duration::from_secs(5));
     let mut status_rx = st.status.subscribe();
     let mut last_paused = status_rx.borrow_and_update().paused;
@@ -202,24 +257,17 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
     let mut offer_rx = st.offers.tx.subscribe();
     loop {
         tokio::select! {
-            msg = socket.recv() => {
-                // Phones vanish without a clean close (sleep, Wi-Fi drop); that's a normal end.
-                let Some(Ok(msg)) = msg else { return Ok(()) };
-                match msg {
-                    Message::Text(t) => {
-                        for reply in handle(st, &t).await {
-                            send(socket, &reply).await?;
-                        }
-                    }
-                    Message::Close(_) => return Ok(()),
-                    _ => {}
+            msg = link.incoming.recv() => {
+                let Some(text) = msg else { return Ok(()) };
+                for reply in handle(st, &text, link.transport).await {
+                    link.send(&reply).await?;
                 }
             }
             clip = clip_rx.recv() => {
                 match clip {
                     Ok(clip) => {
-                        if st.runtime().clip_to_phone && !st.paused() {
-                            send(socket, &clip.to_msg()).await?;
+                        if st.runtime().clip_to_phone && !st.paused() && clip.fits(link.transport) {
+                            link.send(&clip.to_msg()).await?;
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
@@ -228,7 +276,8 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
             }
             offer = offer_rx.recv() => {
                 match offer {
-                    Ok(o) => send(socket, &ServerMsg::FileOffer { id: o.id, name: o.name, size: o.size }).await?,
+                    Ok(o) if wifi => link.send(&ServerMsg::FileOffer { id: o.id, name: o.name, size: o.size }).await?,
+                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 }
@@ -236,7 +285,7 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
             // Drop the session promptly if the device is revoked (tray or CLI).
             _ = recheck.tick() => {
                 if DeviceStore::load(&st.paths.devices())?.verify(token).is_none() {
-                    send(socket, &ServerMsg::Error { msg: "pairing revoked".into() }).await?;
+                    link.send(&ServerMsg::Error { msg: "pairing revoked".into() }).await?;
                     return Ok(());
                 }
             }
@@ -248,18 +297,18 @@ async fn run_session(socket: &mut WebSocket, st: &AppState, token: &str) -> Resu
                 };
                 if paused != last_paused {
                     last_paused = paused;
-                    send(socket, &ServerMsg::Paused { paused }).await?;
+                    link.send(&ServerMsg::Paused { paused }).await?;
                 }
                 if runtime != last_runtime {
                     last_runtime = runtime;
-                    send(socket, &ServerMsg::ClipSettings { to_phone: runtime.clip_to_phone, to_pc: runtime.clip_to_pc }).await?;
+                    link.send(&ServerMsg::ClipSettings { to_phone: runtime.clip_to_phone, to_pc: runtime.clip_to_pc }).await?;
                 }
             }
         }
     }
 }
 
-async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
+async fn handle(st: &AppState, text: &str, transport: Transport) -> Vec<ServerMsg> {
     let msg = match serde_json::from_str::<ClientMsg>(text) {
         Ok(m) => m,
         Err(e) => return vec![ServerMsg::Error { msg: format!("bad message: {e}") }],
@@ -325,6 +374,9 @@ async fn handle(st: &AppState, text: &str) -> Vec<ServerMsg> {
             Ok(vec![])
         }
         ClientMsg::ClipGet => match clipboard::read().await {
+            Ok(Some(clip)) if !clip.fits(transport) => {
+                Ok(vec![ServerMsg::Info { msg: "The PC clipboard has an image or is too big; that needs Wi-Fi".into() }])
+            }
             Ok(Some(clip)) => Ok(vec![clip.to_msg()]),
             Ok(None) => Ok(vec![ServerMsg::Info { msg: "The PC clipboard is empty".into() }]),
             Err(e) => Err(e),

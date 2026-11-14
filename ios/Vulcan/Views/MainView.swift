@@ -157,7 +157,9 @@ private struct StatusBar: View {
         case .idle: return (.gray, "Not connected")
         case let .connecting(host): return (.orange, "Connecting to \(host)…")
         case .searching: return (.orange, "Looking for your PC…")
-        case let .connected(name): return paused ? (Theme.warning, "\(name): input paused") : (Theme.accent, name)
+        case let .connected(name):
+            let via = model.connection.transport == .bluetooth ? " · Bluetooth" : ""
+            return paused ? (Theme.warning, "\(name)\(via): input paused") : (Theme.accent, "\(name)\(via)")
         case let .waiting(reason): return (.orange, reason)
         case .unpaired: return (.red, "Not paired")
         }
