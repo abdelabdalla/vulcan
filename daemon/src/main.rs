@@ -1,4 +1,5 @@
 mod actions;
+mod ancs;
 mod auth;
 mod clipboard;
 mod config;
@@ -140,6 +141,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         clip_memory: Default::default(),
         offers: Default::default(),
         cursor: cursor::CursorBoost::spawn(&cfg.pointer),
+        phone_link: cfg.notifications.enabled.then(ancs::PhoneLink::spawn),
         cfg,
     });
 

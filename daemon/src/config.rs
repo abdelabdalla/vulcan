@@ -48,6 +48,20 @@ pub struct Config {
     pub displays: std::collections::HashMap<String, String>,
     /// USB devices the phone can disconnect and reconnect.
     pub usb: Vec<UsbConfig>,
+    pub notifications: NotificationsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Show iPhone notifications on the desktop over Bluetooth (ANCS).
+    pub enabled: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +147,7 @@ impl Default for Config {
             commands: Vec::new(),
             displays: Default::default(),
             usb: Vec::new(),
+            notifications: NotificationsConfig::default(),
         }
     }
 }
@@ -180,6 +195,9 @@ cursor_size = 24         # normal size to return to
 [power]
 enabled = true                           # lock / suspend / reboot / power off from the phone
 lock = "loginctl lock-session"           # needs hypridle (its lock_cmd starts hyprlock)
+
+[notifications]
+enabled = true   # iPhone notifications on the desktop over Bluetooth; pair from the tray
 
 # Friendly monitor names on the phone, keyed by connector (see `hyprctl monitors`).
 [displays]
