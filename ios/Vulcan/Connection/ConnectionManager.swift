@@ -130,7 +130,7 @@ final class ConnectionManager {
             delegateQueue: nil
         )
         let ws = session.webSocketTask(with: url)
-        ws.maximumMessageSize = 1 << 20
+        ws.maximumMessageSize = 32 << 20 // matches the PC; clipboard images can be up to 20 MB
         self.session = session
         socket = ws
         ws.resume()
