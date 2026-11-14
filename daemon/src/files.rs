@@ -546,14 +546,15 @@ async fn image_thumb(path: &Path) -> Option<Vec<u8>> {
 }
 
 async fn video_thumb(path: &Path) -> Option<Vec<u8>> {
-    // A frame 1 s in avoids black intros; very short clips fall back to the first frame.
+    // Start 1 s in to skip black intros; very short clips fall back to the start.
     for seek in ["1", "0"] {
         let mut cmd = tokio::process::Command::new("ffmpeg");
         cmd.args(["-v", "error", "-ss", seek, "-i"]).arg(path).args([
             "-frames:v",
             "1",
             "-vf",
-            "scale=256:256:force_original_aspect_ratio=decrease",
+            // Pick a representative frame from the next ~3 s, not a black fade.
+            "thumbnail=90,scale=256:256:force_original_aspect_ratio=decrease",
             "-f",
             "image2pipe",
             "-c:v",
