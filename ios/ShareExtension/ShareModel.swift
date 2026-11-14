@@ -134,6 +134,7 @@ final class ShareModel {
     /// Copy the shared item into our temp folder (the provider's copy is deleted when its callback returns).
     nonisolated private static func load(_ provider: NSItemProvider) async -> Item? {
         guard let type = bestType(provider) else { return nil }
+        let suggestedName = provider.suggestedName
         return await withCheckedContinuation { continuation in
             _ = provider.loadFileRepresentation(forTypeIdentifier: type) { url, _ in
                 guard let url else { return continuation.resume(returning: nil) }
@@ -142,7 +143,7 @@ final class ShareModel {
                 do {
                     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
                     try FileManager.default.copyItem(at: url, to: dest)
-                    continuation.resume(returning: Item(name: name(for: provider, file: url), file: dest))
+                    continuation.resume(returning: Item(name: name(suggested: suggestedName, file: url), file: dest))
                 } catch {
                     continuation.resume(returning: nil)
                 }
@@ -161,8 +162,8 @@ final class ShareModel {
     }
 
     /// Photos suggests "IMG_1234" without an extension; take that from the file.
-    nonisolated static func name(for provider: NSItemProvider, file: URL) -> String {
-        guard let suggested = provider.suggestedName, !suggested.isEmpty else { return file.lastPathComponent }
+    nonisolated static func name(suggested: String?, file: URL) -> String {
+        guard let suggested, !suggested.isEmpty else { return file.lastPathComponent }
         if (suggested as NSString).pathExtension.isEmpty, !file.pathExtension.isEmpty {
             return "\(suggested).\(file.pathExtension)"
         }
