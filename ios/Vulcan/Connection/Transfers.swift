@@ -193,6 +193,7 @@ final class TransferManager {
                 let walk = try JSONDecoder().decode(PCWalk.self, from: data)
                 if walk.files.isEmpty {
                     update(id) { $0.state = .done("Empty folder"); $0.detail = nil }
+                    didFinish(id)
                     return
                 }
 
@@ -233,6 +234,7 @@ final class TransferManager {
             } catch {
                 update(id) { $0.state = .failed(error.localizedDescription); $0.detail = nil }
             }
+            didFinish(id)
         }
     }
 
@@ -285,6 +287,7 @@ final class TransferManager {
                     self.update(id) { $0.state = .failed(failure ?? "Download failed") }
                     onFinish?(false)
                 }
+                self.didFinish(id)
             }
         }
         observe(task, id: id)
@@ -402,6 +405,7 @@ final class TransferManager {
                     case let .failure(error): $0.state = .failed(error.localizedDescription)
                     }
                 }
+                self?.didFinish(id)
             }
         }
         observe(task, id: id)
@@ -413,6 +417,56 @@ final class TransferManager {
         let pending = pendingUploads
         pendingUploads = []
         for (file, name) in pending { upload(file, name: name) }
+    }
+
+    // MARK: Completion message
+
+    /// Transfers finished since the last message; announced together once nothing is still running.
+    @ObservationIgnored private var finishedBatch: [Transfer] = []
+
+    private func didFinish(_ id: UUID) {
+        guard let transfer = transfers.first(where: { $0.id == id }) else { return }
+        finishedBatch.append(transfer)
+        let busy = transfers.contains {
+            switch $0.state {
+            case .running, .waiting: true
+            default: false
+            }
+        }
+        guard !busy else { return }
+        let batch = finishedBatch
+        finishedBatch = []
+
+        let failures = batch.compactMap { t -> String? in
+            if case let .failed(message) = t.state { return "\(t.name): \(message)" }
+            return nil
+        }
+        let succeeded = batch.count - failures.count
+        let haptic = UINotificationFeedbackGenerator()
+        if failures.isEmpty {
+            haptic.notificationOccurred(.success)
+        } else {
+            haptic.notificationOccurred(.error)
+        }
+
+        if batch.count == 1, let t = batch.first {
+            switch t.state {
+            case let .done(text): connection.showInfo("\(t.name) — \(text)")
+            case let .failed(message): connection.showError("\(t.name) failed: \(message)")
+            default: break
+            }
+            return
+        }
+        let allIncoming = batch.allSatisfy(\.incoming)
+        let allOutgoing = batch.allSatisfy { !$0.incoming }
+        let noun = allIncoming ? "downloads" : allOutgoing ? "uploads" : "transfers"
+        if failures.isEmpty {
+            connection.showInfo(allIncoming ? "Downloaded \(succeeded) items" : allOutgoing ? "Sent \(succeeded) files to the PC" : "\(succeeded) transfers finished")
+        } else if succeeded == 0 {
+            connection.showError("All \(failures.count) \(noun) failed")
+        } else {
+            connection.showError("\(succeeded) \(noun) finished, \(failures.count) failed")
+        }
     }
 
     // MARK: Progress

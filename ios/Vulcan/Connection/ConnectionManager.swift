@@ -318,6 +318,10 @@ final class ConnectionManager {
         show(toast: text, isError: false)
     }
 
+    func showError(_ text: String) {
+        show(toast: text, isError: true)
+    }
+
     private func show(toast text: String, isError: Bool) {
         toast = Toast(text: text, isError: isError)
         toastTask?.cancel()
