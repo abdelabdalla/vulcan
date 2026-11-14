@@ -112,6 +112,14 @@ pub struct PointerConfig {
     pub acceleration: f64,
     /// Hi-res wheel units (120 = one notch) per phone point.
     pub scroll_speed: f64,
+    /// Cursor size while the phone moves the pointer (0 = off).
+    pub cursor_boost_size: u32,
+    /// How long the cursor stays big after the last movement.
+    pub cursor_boost_ms: u64,
+    /// Normal cursor size to return to (matches XCURSOR_SIZE).
+    pub cursor_size: u32,
+    /// Cursor theme; empty = detect.
+    pub cursor_theme: String,
 }
 
 impl Default for Config {
@@ -137,7 +145,15 @@ impl Default for KeyboardConfig {
 
 impl Default for PointerConfig {
     fn default() -> Self {
-        Self { sensitivity: 1.5, acceleration: 0.4, scroll_speed: 4.0 }
+        Self {
+            sensitivity: 1.5,
+            acceleration: 0.4,
+            scroll_speed: 4.0,
+            cursor_boost_size: 64,
+            cursor_boost_ms: 2000,
+            cursor_size: 24,
+            cursor_theme: String::new(),
+        }
     }
 }
 
@@ -157,6 +173,9 @@ options = ""
 sensitivity = 1.5    # phone points -> pixels
 acceleration = 0.4   # extra gain on fast swipes, 0 = linear
 scroll_speed = 4.0   # wheel units per point (120 = one notch)
+cursor_boost_size = 64   # bigger cursor while the phone moves it (0 = off)
+cursor_boost_ms = 2000   # how long it stays big after the last movement
+cursor_size = 24         # normal size to return to
 
 [power]
 enabled = true                           # lock / suspend / reboot / power off from the phone
