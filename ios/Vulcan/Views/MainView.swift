@@ -38,6 +38,12 @@ struct MainView: View {
 
             ButtonRow(keyboardUp: $keyboardUp)
                 .padding(12)
+
+            // Part of the layout rather than the keyboard's inputAccessoryView: on iOS 26 SwiftUI
+            // counted the accessory's height twice and left a gap above the keyboard.
+            if keyboardUp {
+                KeysBar(onHide: { keyboardUp = false })
+            }
         }
         .overlay(alignment: .top) {
             if let toast = conn.toast {

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Sits above the iOS keyboard: special keys, sticky modifiers, F-keys and custom combos.
+/// Shown above the iOS keyboard while typing: special keys, sticky modifiers, F-keys and custom combos.
 struct KeysBar: View {
     static let height: CGFloat = 100
 
