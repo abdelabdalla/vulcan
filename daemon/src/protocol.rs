@@ -105,6 +105,26 @@ pub struct OfferInfo {
     pub size: u64,
 }
 
+/// How the wallpaper changes by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Rotation {
+    #[default]
+    Off,
+    /// Through the gallery in name order.
+    Order,
+    /// Random order, each picture once before any repeats.
+    Shuffle,
+}
+
+/// One picture in the wallpaper gallery.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WallpaperInfo {
+    pub name: String,
+    /// Unix seconds; lets the phone cache thumbnails.
+    pub modified: i64,
+}
+
 /// A custom command from the config, as shown on the phone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommandInfo {
@@ -179,6 +199,22 @@ pub enum ClientMsg {
     },
     /// Run a custom command from the config by id.
     Cmd { id: String },
+    /// Ask for the wallpaper gallery.
+    WallList,
+    /// Show a gallery picture now (restarts the rotation timer).
+    WallSet { name: String },
+    /// Skip to the next picture in the rotation.
+    WallNext,
+    /// Change how the wallpaper rotates; `interval` is in seconds.
+    WallRotation {
+        rotation: Rotation,
+        #[serde(default)]
+        interval: Option<u64>,
+    },
+    /// Copy pictures (or every picture in folders) from the PC's home folder into the gallery.
+    WallAdd { paths: Vec<String> },
+    /// Remove pictures from the gallery (they go to the trash).
+    WallRemove { names: Vec<String> },
     /// Ask for current volume and now-playing info.
     Refresh,
     Ping,
@@ -219,6 +255,15 @@ pub enum ServerMsg {
     /// A file queued for the phone (sent on connect for anything still pending).
     FileOffer { id: String, name: String, size: u64 },
     Paused { paused: bool },
+    /// The wallpaper gallery. `dir` is relative to home (for `/fs/thumb`); `current` is the
+    /// picture on screen if it's from the gallery.
+    Wallpapers {
+        dir: String,
+        items: Vec<WallpaperInfo>,
+        current: Option<String>,
+        rotation: Rotation,
+        interval: u64,
+    },
     Pong,
 }
 
@@ -254,6 +299,10 @@ mod tests {
         assert_eq!(m, ClientMsg::ClipSettings { to_phone: None, to_pc: Some(false) });
         let m: ClientMsg = serde_json::from_str(r#"{"t":"cmd","id":"Workspace 2"}"#).unwrap();
         assert_eq!(m, ClientMsg::Cmd { id: "Workspace 2".into() });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"wall_rotation","rotation":"shuffle","interval":600}"#).unwrap();
+        assert_eq!(m, ClientMsg::WallRotation { rotation: Rotation::Shuffle, interval: Some(600) });
+        let m: ClientMsg = serde_json::from_str(r#"{"t":"wall_add","paths":["Pictures/a.jpg"]}"#).unwrap();
+        assert_eq!(m, ClientMsg::WallAdd { paths: vec!["Pictures/a.jpg".into()] });
     }
 
     #[test]

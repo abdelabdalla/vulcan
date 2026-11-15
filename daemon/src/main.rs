@@ -16,6 +16,7 @@ mod tls;
 mod tray;
 mod usb;
 mod util;
+mod wallpaper;
 
 use std::sync::{Arc, Mutex};
 
@@ -132,6 +133,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
     let runtime = RuntimeState::load(&paths);
     let (status, _) = watch::channel(Status { runtime, ..Default::default() });
     let (clip_tx, _) = tokio::sync::broadcast::channel(8);
+    let wallpapers = wallpaper::Wallpapers::new(&cfg.wallpaper, &paths);
     let st = Arc::new(AppState {
         paths,
         fingerprint: tls.fingerprint.clone(),
@@ -143,6 +145,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         offers: Default::default(),
         cursor: cursor::CursorBoost::spawn(&cfg.pointer),
         phone_link: cfg.notifications.enabled.then(ancs::PhoneLink::spawn),
+        wallpapers,
         cfg,
     });
 
@@ -150,6 +153,7 @@ async fn serve(paths: Paths, cfg: Config, host: String, no_tray: bool) -> Result
         .inspect_err(|e| warn!("mDNS advertisement failed: {e:#}"))
         .ok();
     clipboard::spawn_watcher(st.clone());
+    st.wallpapers.spawn();
     if st.cfg.bluetooth.remote {
         bluetooth::spawn(st.clone());
     }

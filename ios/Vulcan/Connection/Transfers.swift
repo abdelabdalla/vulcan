@@ -159,10 +159,15 @@ final class TransferManager {
     }
 
     /// Preview of a PC image or video, cached in memory by path and modification time.
-    func thumbnail(path: String, modified: Int64, hidden: Bool) async -> UIImage? {
-        let key = "\(path)|\(modified)" as NSString
+    func thumbnail(path: String, modified: Int64, hidden: Bool, size: Int = 256) async -> UIImage? {
+        let key = "\(path)|\(modified)|\(size)" as NSString
         if let cached = thumbnails.object(forKey: key) { return cached }
-        guard let req = request(path: "/fs/thumb", query: [.init(name: "path", value: path), .init(name: "hidden", value: String(hidden))]),
+        let query: [URLQueryItem] = [
+            .init(name: "path", value: path),
+            .init(name: "hidden", value: String(hidden)),
+            .init(name: "size", value: String(size)),
+        ]
+        guard let req = request(path: "/fs/thumb", query: query),
               let session = urlSession(),
               case let (data, response)? = try? await session.data(for: req),
               (response as? HTTPURLResponse)?.statusCode == 200,
@@ -410,6 +415,16 @@ final class TransferManager {
         }
         observe(task, id: id)
         task.resume()
+    }
+
+    /// Upload a picture straight into the PC's wallpaper gallery.
+    func uploadWallpaper(_ data: Data, name: String) async throws {
+        guard var req = request(path: "/wallpapers/upload", query: [.init(name: "name", value: name)], method: "POST"),
+              let session = urlSession()
+        else { throw TransferError(message: "Not connected to the PC") }
+        req.timeoutInterval = 60
+        let (body, response) = try await session.upload(for: req, from: data)
+        try Self.check(response, body)
     }
 
     /// Called when the connection comes up.

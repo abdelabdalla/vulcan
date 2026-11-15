@@ -287,7 +287,7 @@ struct BrowserView: View {
     }
 }
 
-private struct FolderRow: View {
+struct FolderRow: View {
     let name: String
 
     var body: some View {
@@ -301,7 +301,7 @@ private struct FolderRow: View {
     }
 }
 
-private struct FileRow: View {
+struct FileRow: View {
     let entry: PCListing.Entry
     let path: String
     let hidden: Bool
@@ -337,7 +337,7 @@ private struct FileRow: View {
 }
 
 /// Lazily loaded preview of a PC image or video.
-private struct Thumbnail: View {
+struct Thumbnail: View {
     @Environment(AppModel.self) private var model
     let path: String
     let modified: Int64

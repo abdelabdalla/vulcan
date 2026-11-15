@@ -33,6 +33,9 @@ impl Paths {
     pub fn state(&self) -> PathBuf {
         self.dir.join("state.toml")
     }
+    pub fn wallpaper_state(&self) -> PathBuf {
+        self.dir.join("wallpaper.toml")
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +53,30 @@ pub struct Config {
     pub usb: Vec<UsbConfig>,
     pub notifications: NotificationsConfig,
     pub bluetooth: BluetoothConfig,
+    pub wallpaper: WallpaperConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WallpaperConfig {
+    /// The gallery: every picture in this folder.
+    pub dir: String,
+    /// Run with the picture's path to set it (wallpaper plus colours).
+    pub script: String,
+}
+
+impl Default for WallpaperConfig {
+    fn default() -> Self {
+        Self { dir: "~/Pictures/Wallpapers/Vulcan".into(), script: "~/.config/hypr/scripts/set_wallpaper.sh".into() }
+    }
+}
+
+/// Expand a leading `~/` to the home folder.
+pub fn expand_home(path: &str) -> PathBuf {
+    match (path.strip_prefix("~/"), directories::BaseDirs::new()) {
+        (Some(rest), Some(base)) => base.home_dir().join(rest),
+        _ => PathBuf::from(path),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +190,7 @@ impl Default for Config {
             usb: Vec::new(),
             notifications: NotificationsConfig::default(),
             bluetooth: BluetoothConfig::default(),
+            wallpaper: WallpaperConfig::default(),
         }
     }
 }
@@ -216,6 +244,10 @@ enabled = true   # iPhone notifications on the desktop over Bluetooth; pair from
 
 [bluetooth]
 remote = true    # control the PC over Bluetooth when Wi-Fi isn't available (uses the same pairing)
+
+[wallpaper]
+dir = "~/Pictures/Wallpapers/Vulcan"                 # the phone's wallpaper gallery
+script = "~/.config/hypr/scripts/set_wallpaper.sh"   # called with the picture's path
 
 # Friendly monitor names on the phone, keyed by connector (see `hyprctl monitors`).
 [displays]
