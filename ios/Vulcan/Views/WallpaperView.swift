@@ -279,14 +279,15 @@ struct WallpaperView: View {
         for (i, item) in items.enumerated() {
             uploading = (i, items.count)
             let type = item.supportedContentTypes.first { $0.conforms(to: .image) }
-            guard let data = try? await item.loadTransferable(type: Data.self) else {
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  case let (body, ext)? = await Self.wallpaperData(data, type: type)
+            else {
                 failures.append("Couldn't read a photo")
                 continue
             }
-            let ext = type?.preferredFilenameExtension ?? "jpg"
             let suffix = items.count > 1 ? " \(i + 1)" : ""
             do {
-                try await model.transfers.uploadWallpaper(data, name: "iPhone \(stamp)\(suffix).\(ext)")
+                try await model.transfers.uploadWallpaper(body, name: "iPhone \(stamp)\(suffix).\(ext)")
             } catch {
                 failures.append(error.localizedDescription)
             }
@@ -297,6 +298,16 @@ struct WallpaperView: View {
         } else {
             conn.showInfo(items.count == 1 ? "Added to the wallpapers" : "Added \(items.count) wallpapers")
         }
+    }
+
+    /// The PC's wallpaper tool reads JPEG, PNG, GIF and WebP but not HEIC, so iPhone photos
+    /// are re-encoded as JPEG.
+    nonisolated static func wallpaperData(_ data: Data, type: UTType?) async -> (Data, String)? {
+        if let type, [UTType.jpeg, .png, .gif, .webP].contains(where: { type.conforms(to: $0) }) {
+            return (data, type.preferredFilenameExtension ?? "jpg")
+        }
+        guard let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.92) else { return nil }
+        return (jpeg, "jpg")
     }
 
     static func describe(_ seconds: Int) -> String {

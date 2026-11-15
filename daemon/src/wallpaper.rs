@@ -128,7 +128,8 @@ impl Wallpapers {
         let text = String::from_utf8_lossy(&out.stdout);
         let path = text.lines().find_map(|l| l.split_once("image: ").map(|(_, p)| PathBuf::from(p.trim())))?;
         let dir = self.dir.canonicalize().ok()?;
-        (path.parent()? == dir).then(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))?
+        // Removed pictures stay on screen until the next change; they aren't in the gallery any more.
+        (path.parent()? == dir && path.is_file()).then(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))?
     }
 
     pub async fn gallery(&self) -> ServerMsg {
@@ -246,21 +247,34 @@ impl Wallpapers {
         if sources.is_empty() {
             bail!("No pictures there to add");
         }
-        let mut added = 0;
+        let (mut added, mut failed) = (0, 0);
         for src in &sources {
             match self.import(src, true).await {
                 Ok(true) => added += 1,
                 Ok(false) => {}
-                Err(e) => warn!("adding {} to the wallpapers: {e:#}", src.display()),
+                Err(e) => {
+                    failed += 1;
+                    warn!("adding {} to the wallpapers: {e:#}", src.display());
+                }
             }
         }
         self.bump();
-        info!(added, "pictures added to the wallpaper gallery");
-        Ok(match added {
-            0 => "Those are already in the gallery".into(),
+        info!(added, failed, "pictures added to the wallpaper gallery");
+        let mut msg = match added {
+            0 if failed == 0 => "Those are already in the gallery".to_string(),
+            0 => String::new(),
             1 => "Added 1 wallpaper".into(),
             n => format!("Added {n} wallpapers"),
-        })
+        };
+        if failed > 0 {
+            let what = if failed == 1 { "1 picture".to_string() } else { format!("{failed} pictures") };
+            let note = format!("{what} couldn't be converted (HEIC/AVIF need libheif on the PC)");
+            if msg.is_empty() {
+                bail!(note);
+            }
+            msg = format!("{msg}; {note}");
+        }
+        Ok(msg)
     }
 
     /// Bring one picture into the gallery, converting it if awww can't show it. With `copy`, the
