@@ -31,7 +31,7 @@ const MAX_LISTING: usize = 5000;
 // MARK: Errors and auth
 
 #[derive(Debug)]
-pub struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -50,12 +50,12 @@ impl From<std::io::Error> for ApiError {
     }
 }
 
-fn err(code: StatusCode, msg: impl Into<String>) -> ApiError {
+pub(crate) fn err(code: StatusCode, msg: impl Into<String>) -> ApiError {
     ApiError(code, msg.into())
 }
 
 /// Same pairing token as the WebSocket, sent as `Authorization: Bearer <token>`.
-fn authorize(st: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
+pub(crate) fn authorize(st: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
     let token = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -201,7 +201,7 @@ pub fn sanitize_name(name: &str) -> String {
 }
 
 /// `name`, or `name (1).ext`, `name (2).ext`, ... if taken.
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
+pub(crate) fn unique_path(dir: &Path, name: &str) -> PathBuf {
     let candidate = dir.join(name);
     if !candidate.exists() {
         return candidate;
@@ -220,9 +220,17 @@ pub async fn upload(
     body: Body,
 ) -> Result<Json<UploadResult>, ApiError> {
     let device = authorize(&st, &headers)?;
-    let dir = inbox();
-    tokio::fs::create_dir_all(&dir).await?;
-    let name = sanitize_name(&q.name);
+    let (dest, size) = receive(body, &inbox(), &q.name).await?;
+    let saved = dest.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    info!(%device, file = %saved, size, "received file from phone");
+    notify_received(dest);
+    Ok(Json(UploadResult { name: saved, size }))
+}
+
+/// Stream a request body into `dir` under a free version of `name`; returns where it went.
+pub(crate) async fn receive(body: Body, dir: &Path, name: &str) -> Result<(PathBuf, u64), ApiError> {
+    tokio::fs::create_dir_all(dir).await?;
+    let name = sanitize_name(name);
     let part = dir.join(format!(".{}.vulcan-part", hex::encode(rand::random::<[u8; 8]>())));
 
     let mut file = tokio::fs::File::create(&part).await?;
@@ -243,12 +251,9 @@ pub async fn upload(
         let _ = tokio::fs::remove_file(&part).await;
         return Err(e);
     }
-    let dest = unique_path(&dir, &name);
+    let dest = unique_path(dir, &name);
     tokio::fs::rename(&part, &dest).await?;
-    let saved = dest.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    info!(%device, file = %saved, size, "received file from phone");
-    notify_received(dest);
-    Ok(Json(UploadResult { name: saved, size }))
+    Ok((dest, size))
 }
 
 /// Files received recently, and a counter that tells the latest arrival apart.
@@ -309,6 +314,9 @@ pub struct FsQuery {
     path: String,
     #[serde(default)]
     hidden: bool,
+    /// Thumbnail edge in pixels (default 256).
+    #[serde(default)]
+    size: Option<u32>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -328,7 +336,7 @@ pub struct Listing {
     truncated: bool,
 }
 
-fn home() -> Result<PathBuf, ApiError> {
+pub(crate) fn home() -> Result<PathBuf, ApiError> {
     directories::BaseDirs::new()
         .map(|b| b.home_dir().to_path_buf())
         .ok_or_else(|| err(StatusCode::INTERNAL_SERVER_ERROR, "no home directory"))
@@ -340,7 +348,7 @@ fn is_hidden(name: &str) -> bool {
 
 /// Resolve a home-relative path, following symlinks, and refuse anything outside home
 /// (or hidden, unless asked for). Returns the real path and its home-relative form.
-fn resolve(home: &Path, rel: &str, hidden: bool) -> Result<(PathBuf, String), ApiError> {
+pub(crate) fn resolve(home: &Path, rel: &str, hidden: bool) -> Result<(PathBuf, String), ApiError> {
     let rel = Path::new(rel.trim_start_matches('/'));
     if rel.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir | Component::Prefix(_))) {
         return Err(err(StatusCode::FORBIDDEN, "path must stay inside the home folder"));
@@ -505,15 +513,19 @@ pub async fn fs_thumb(
     }
     let modified = meta.modified().unwrap_or(UNIX_EPOCH);
 
-    if let Some(png) = freedesktop_thumb(&path, modified).await {
+    let px = q.size.unwrap_or(256).clamp(64, 1024);
+    // The desktop's own thumbnails are 256 px; bigger requests are rendered here.
+    if px <= 256
+        && let Some(png) = freedesktop_thumb(&path, modified).await
+    {
         return Ok(image_response(png, "image/png"));
     }
-    let cache = thumb_cache_path(&path, modified, meta.len());
+    let cache = thumb_cache_path(&path, modified, meta.len(), px);
     if let Ok(jpg) = tokio::fs::read(&cache).await {
         return Ok(image_response(jpg, "image/jpeg"));
     }
     let _slot = THUMB_SLOTS.acquire().await.map_err(|e| err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let jpg = if video { video_thumb(&path).await } else { image_thumb(&path).await }
+    let jpg = if video { video_thumb(&path, px).await } else { image_thumb(&path, px).await }
         .ok_or_else(|| err(StatusCode::NOT_FOUND, "couldn't render a preview"))?;
     if let Some(dir) = cache.parent() {
         let _ = tokio::fs::create_dir_all(dir).await;
@@ -557,10 +569,10 @@ async fn freedesktop_thumb(path: &Path, modified: SystemTime) -> Option<Vec<u8>>
     None
 }
 
-fn thumb_cache_path(path: &Path, modified: SystemTime, size: u64) -> PathBuf {
+fn thumb_cache_path(path: &Path, modified: SystemTime, size: u64, px: u32) -> PathBuf {
     use sha2::{Digest, Sha256};
     let secs = modified.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
-    let key = hex::encode(Sha256::digest(format!("{}\0{secs}\0{size}", path.display()).as_bytes()));
+    let key = hex::encode(Sha256::digest(format!("{}\0{secs}\0{size}\0{px}", path.display()).as_bytes()));
     let base = directories::BaseDirs::new().map_or_else(std::env::temp_dir, |b| b.cache_dir().to_path_buf());
     base.join("vulcan/thumbs").join(format!("{}.jpg", &key[..32]))
 }
@@ -571,16 +583,16 @@ async fn run_thumb(mut cmd: tokio::process::Command) -> Option<Vec<u8>> {
     (out.status.success() && !out.stdout.is_empty()).then_some(out.stdout)
 }
 
-async fn image_thumb(path: &Path) -> Option<Vec<u8>> {
+async fn image_thumb(path: &Path, px: u32) -> Option<Vec<u8>> {
     // [0]: first frame only (GIFs, multi-page TIFFs).
     let mut input = path.as_os_str().to_owned();
     input.push("[0]");
     let mut cmd = tokio::process::Command::new("magick");
-    cmd.arg(input).args(["-auto-orient", "-thumbnail", "256x256>", "-quality", "80", "jpg:-"]);
+    cmd.arg(input).args(["-auto-orient", "-thumbnail", &format!("{px}x{px}>"), "-quality", "80", "jpg:-"]);
     run_thumb(cmd).await
 }
 
-async fn video_thumb(path: &Path) -> Option<Vec<u8>> {
+async fn video_thumb(path: &Path, px: u32) -> Option<Vec<u8>> {
     // Start 1 s in to skip black intros; very short clips fall back to the start.
     for seek in ["1", "0"] {
         let mut cmd = tokio::process::Command::new("ffmpeg");
@@ -589,7 +601,7 @@ async fn video_thumb(path: &Path) -> Option<Vec<u8>> {
             "1",
             "-vf",
             // Pick a representative frame from the next ~3 s, not a black fade.
-            "thumbnail=90,scale=256:256:force_original_aspect_ratio=decrease",
+            &format!("thumbnail=90,scale={px}:{px}:force_original_aspect_ratio=decrease"),
             "-f",
             "image2pipe",
             "-c:v",

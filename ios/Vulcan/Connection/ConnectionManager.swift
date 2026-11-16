@@ -33,6 +33,7 @@ final class ConnectionManager {
     private(set) var media: MediaState?
     private(set) var monitors: [MonitorInfo] = []
     private(set) var usbDevices: [UsbDevice] = []
+    private(set) var wallpapers: WallpaperGallery?
     /// Clipboard auto-sync settings, owned by the PC (shared with its tray menu).
     private(set) var clipToPhone = true
     private(set) var clipToPC = true
@@ -302,6 +303,14 @@ final class ConnectionManager {
             usbDevices = msg.devices ?? []
         case "displays":
             monitors = msg.monitors ?? []
+        case "wallpapers":
+            wallpapers = WallpaperGallery(
+                dir: msg.dir ?? "",
+                items: msg.items ?? [],
+                current: msg.current,
+                rotation: msg.rotation ?? .off,
+                interval: msg.interval ?? 1800
+            )
         case "info":
             if let text = msg.msg { show(toast: text, isError: false) }
         case "paused":

@@ -57,6 +57,37 @@ struct UsbDevice: Decodable, Identifiable, Equatable {
     var id: String { name }
 }
 
+/// How the PC's wallpaper changes by itself.
+enum WallRotation: String, Decodable, CaseIterable, Identifiable {
+    case off, order, shuffle
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: "Off"
+        case .order: "In order"
+        case .shuffle: "Shuffle"
+        }
+    }
+}
+
+/// One picture in the PC's wallpaper gallery.
+struct WallpaperItem: Decodable, Identifiable, Equatable {
+    let name: String
+    let modified: Int64
+    var id: String { name }
+}
+
+/// The PC's wallpaper gallery. `dir` is relative to the PC's home folder (for thumbnails).
+struct WallpaperGallery: Equatable {
+    var dir: String
+    var items: [WallpaperItem]
+    var current: String?
+    var rotation: WallRotation
+    /// Seconds between changes.
+    var interval: Int
+}
+
 /// Clipboard content sent to the PC.
 enum ClipPayload {
     case text(String)
@@ -91,6 +122,13 @@ enum ClientMessage: Encodable {
     /// A file offer has been downloaded.
     case fileDone(String)
     case clipSettings(toPhone: Bool?, toPC: Bool?)
+    case wallList
+    case wallSet(String)
+    case wallNext
+    case wallRotation(WallRotation, interval: Int?)
+    /// Home-relative paths of pictures or folders on the PC.
+    case wallAdd([String])
+    case wallRemove([String])
     case refresh
     case ping
 
@@ -107,6 +145,7 @@ enum ClientMessage: Encodable {
     private enum CodingKeys: String, CodingKey {
         case t, token, device, v, dx, dy, b, s, k, mods, a, value, id, monitor, name, on
         case kind, text, mime, data, auto
+        case rotation, interval, paths, names
         case toPhone = "to_phone"
         case toPC = "to_pc"
     }
@@ -181,6 +220,23 @@ enum ClientMessage: Encodable {
             try c.encode("clip_settings", forKey: .t)
             try c.encodeIfPresent(toPhone, forKey: .toPhone)
             try c.encodeIfPresent(toPC, forKey: .toPC)
+        case .wallList:
+            try c.encode("wall_list", forKey: .t)
+        case let .wallSet(name):
+            try c.encode("wall_set", forKey: .t)
+            try c.encode(name, forKey: .name)
+        case .wallNext:
+            try c.encode("wall_next", forKey: .t)
+        case let .wallRotation(rotation, interval):
+            try c.encode("wall_rotation", forKey: .t)
+            try c.encode(rotation.rawValue, forKey: .rotation)
+            try c.encodeIfPresent(interval, forKey: .interval)
+        case let .wallAdd(paths):
+            try c.encode("wall_add", forKey: .t)
+            try c.encode(paths, forKey: .paths)
+        case let .wallRemove(names):
+            try c.encode("wall_remove", forKey: .t)
+            try c.encode(names, forKey: .names)
         case .refresh:
             try c.encode("refresh", forKey: .t)
         case .ping:
@@ -222,6 +278,12 @@ struct ServerMessage: Decodable {
     let id: String?
     let name: String?
     let size: Int64?
+    // Wallpaper gallery
+    let dir: String?
+    let items: [WallpaperItem]?
+    let current: String?
+    let rotation: WallRotation?
+    let interval: Int?
 
     static func parse(_ text: String) -> ServerMessage? {
         let decoder = JSONDecoder()

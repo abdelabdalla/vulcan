@@ -11,7 +11,7 @@ struct MainView: View {
     @State private var tab = Mode.trackpad
 
     enum Mode {
-        case trackpad, controls, files
+        case trackpad, controls, files, wallpaper
     }
 
     private var conn: ConnectionManager { model.connection }
@@ -24,6 +24,7 @@ struct MainView: View {
             case .trackpad: trackpad
             case .controls: ControlsView()
             case .files: FilesView()
+            case .wallpaper: WallpaperView()
             }
         }
         .onChange(of: tab) { _, _ in keyboardUp = false }
@@ -141,9 +142,10 @@ private struct StatusBar: View {
                 Image(systemName: "hand.point.up.left").tag(MainView.Mode.trackpad)
                 Image(systemName: "slider.horizontal.3").tag(MainView.Mode.controls)
                 Image(systemName: "folder").tag(MainView.Mode.files)
+                Image(systemName: "photo.on.rectangle").tag(MainView.Mode.wallpaper)
             }
             .pickerStyle(.segmented)
-            .frame(width: 150)
+            .frame(width: 196)
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill").font(.title3)
             }

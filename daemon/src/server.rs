@@ -45,6 +45,7 @@ pub struct AppState {
     pub cursor: Option<crate::cursor::CursorBoost>,
     /// iPhone notifications over Bluetooth (None when disabled).
     pub phone_link: Option<Arc<crate::ancs::PhoneLink>>,
+    pub wallpapers: Arc<crate::wallpaper::Wallpapers>,
 }
 
 impl AppState {
@@ -94,6 +95,7 @@ pub async fn run(st: Arc<AppState>, tls: &Tls) -> Result<()> {
         .route("/fs/download", get(files::fs_download))
         .route("/fs/walk", get(files::fs_walk))
         .route("/fs/thumb", get(files::fs_thumb))
+        .route("/wallpapers/upload", post(crate::wallpaper::upload).layer(DefaultBodyLimit::disable()))
         .with_state(st);
     info!(%addr, "listening");
     axum_server::bind_rustls(addr, rustls)
@@ -188,8 +190,15 @@ pub async fn session(mut link: Link, st: Arc<AppState>) -> Result<()> {
     };
 
     info!(%addr, device = %name, transport = ?link.transport, "connected");
-    let mut caps =
-        vec!["input".to_string(), "media".into(), "volume".into(), "display".into(), "commands".into(), "clipboard".into()];
+    let mut caps = vec![
+        "input".to_string(),
+        "media".into(),
+        "volume".into(),
+        "display".into(),
+        "commands".into(),
+        "clipboard".into(),
+        "wallpaper".into(),
+    ];
     if st.cfg.power.enabled {
         caps.push("power".into());
     }
@@ -255,6 +264,8 @@ async fn run_session(link: &mut Link, st: &AppState, token: &str) -> Result<()> 
     let mut last_runtime = st.runtime();
     let mut clip_rx = st.clip_tx.subscribe();
     let mut offer_rx = st.offers.tx.subscribe();
+    let mut wall_rx = st.wallpapers.subscribe();
+    wall_rx.mark_unchanged();
     loop {
         tokio::select! {
             msg = link.incoming.recv() => {
@@ -281,6 +292,11 @@ async fn run_session(link: &mut Link, st: &AppState, token: &str) -> Result<()> 
                     Err(broadcast::error::RecvError::Lagged(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => return Ok(()),
                 }
+            }
+            changed = wall_rx.changed() => {
+                if changed.is_err() { return Ok(()) }
+                wall_rx.mark_unchanged();
+                link.send(&st.wallpapers.gallery().await).await?;
             }
             // Drop the session promptly if the device is revoked (tray or CLI).
             _ = recheck.tick() => {
@@ -381,6 +397,14 @@ async fn handle(st: &AppState, text: &str, transport: Transport) -> Vec<ServerMs
             Ok(None) => Ok(vec![ServerMsg::Info { msg: "The PC clipboard is empty".into() }]),
             Err(e) => Err(e),
         },
+        ClientMsg::WallList => Ok(vec![st.wallpapers.gallery().await]),
+        ClientMsg::WallSet { name } => st.wallpapers.set(&name).await.map(|_| vec![]),
+        ClientMsg::WallNext => st.wallpapers.next().await.map(|_| vec![]),
+        ClientMsg::WallRotation { rotation, interval } => {
+            Ok(vec![ServerMsg::Info { msg: st.wallpapers.set_rotation(rotation, interval) }])
+        }
+        ClientMsg::WallAdd { paths } => st.wallpapers.add(&paths).await.map(|msg| vec![ServerMsg::Info { msg }]),
+        ClientMsg::WallRemove { names } => st.wallpapers.remove(&names).await.map(|msg| vec![ServerMsg::Info { msg }]),
         ClientMsg::Cmd { id } => {
             info!(command = %id, "custom command from phone");
             actions::custom(&id, &st.cfg.commands).await.map(|msg| vec![ServerMsg::Info { msg }])
